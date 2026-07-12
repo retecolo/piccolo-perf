@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -481,6 +482,25 @@ func TestLineProtocolEscapesSpaces(t *testing.T) {
 }
 
 // ============================================================================
+// Server reflected counter
+// ============================================================================
+
+func TestServerReflectedCount(t *testing.T) {
+	srv := NewServer(nil, newRateLimiter(0), &allowlist{}, true)
+	if srv.ReflectedCount() != 0 {
+		t.Errorf("initial ReflectedCount = %d, want 0", srv.ReflectedCount())
+	}
+	srv.reflectedPackets.Add(1)
+	if srv.ReflectedCount() != 1 {
+		t.Errorf("after Add(1) ReflectedCount = %d, want 1", srv.ReflectedCount())
+	}
+	srv.reflectedPackets.Add(99)
+	if srv.ReflectedCount() != 100 {
+		t.Errorf("after Add(99) ReflectedCount = %d, want 100", srv.ReflectedCount())
+	}
+}
+
+// ============================================================================
 // Statistics helpers (stddev, jitter)
 // ============================================================================
 
@@ -526,5 +546,121 @@ func TestStddevAndJitter(t *testing.T) {
 	jitter := jitterSum / time.Duration(len(rtts)-1)
 	if jitter != 10*time.Millisecond {
 		t.Errorf("jitter = %v, want 10ms", jitter)
+	}
+}
+
+// ============================================================================
+// PrometheusStore
+// ============================================================================
+
+func TestPrometheusStoreUpdate(t *testing.T) {
+	store := newPrometheusStore("probe-a")
+	r := ProbeResult{
+		Source:    "probe-a",
+		Target:    "probe-b",
+		Site:      "us-east",
+		Topology:  "mesh",
+		RttMin:    1 * time.Millisecond,
+		RttAvg:    2 * time.Millisecond,
+		RttMax:    3 * time.Millisecond,
+		RttStddev: 500 * time.Microsecond,
+		Jitter:    250 * time.Microsecond,
+		LossPct:   20.0,
+		Sent:      5,
+		Recv:      4,
+	}
+	// Must not panic
+	store.Update(r)
+}
+
+func TestPrometheusStoreLossRatioConversion(t *testing.T) {
+	// LossPct=20.0 should become loss_ratio=0.2 in the gauge
+	store := newPrometheusStore("probe-a")
+	r := ProbeResult{
+		Source:   "probe-a",
+		Target:   "probe-b",
+		Site:     "east",
+		Topology: "mesh",
+		LossPct:  20.0,
+		Sent:     5,
+		Recv:     4,
+	}
+	store.Update(r)
+
+	rec := httptest.NewRecorder()
+	store.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	body := rec.Body.String()
+
+	if !strings.Contains(body, `twamp_loss_ratio`) {
+		t.Errorf("expected twamp_loss_ratio in metrics output, got:\n%s", body)
+	}
+	if !strings.Contains(body, "0.2") {
+		t.Errorf("expected loss_ratio=0.2 (20%% -> 0.2), got:\n%s", body)
+	}
+}
+
+func TestPrometheusStoreLabels(t *testing.T) {
+	store := newPrometheusStore("probe-a")
+	r := ProbeResult{
+		Source:   "probe-a",
+		Target:   "probe-b",
+		Site:     "us-east",
+		Topology: "hub-spoke",
+		Sent:     5,
+		Recv:     5,
+	}
+	store.Update(r)
+
+	rec := httptest.NewRecorder()
+	store.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	body := rec.Body.String()
+
+	for _, want := range []string{
+		`source="probe-a"`,
+		`target="probe-b"`,
+		`site="us-east"`,
+		`topology="hub-spoke"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected label %q in metrics output", want)
+		}
+	}
+}
+
+func TestPrometheusStoreIncrementReflected(t *testing.T) {
+	store := newPrometheusStore("probe-a")
+	store.IncrementReflected()
+	store.IncrementReflected()
+
+	rec := httptest.NewRecorder()
+	store.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	body := rec.Body.String()
+
+	if !strings.Contains(body, "twamp_reflected_packets_total") {
+		t.Errorf("expected twamp_reflected_packets_total in output, got:\n%s", body)
+	}
+	if !strings.Contains(body, "2") {
+		t.Errorf("expected counter value 2 in output, got:\n%s", body)
+	}
+}
+
+// ============================================================================
+// Exporter TLS flag validation
+// ============================================================================
+
+func TestExporterTLSFlagValidation(t *testing.T) {
+	// Both cert and key must be provided together — validate the check logic.
+	// We test the validation function directly, not runExporter (which blocks).
+	err := validateTLSFlags("/path/to/cert", "")
+	if err == nil {
+		t.Error("expected error when cert is set but key is empty")
+	}
+	err = validateTLSFlags("", "/path/to/key")
+	if err == nil {
+		t.Error("expected error when key is set but cert is empty")
+	}
+	err = validateTLSFlags("", "")
+	if err != nil {
+		t.Errorf("expected no error when both are empty, got %v", err)
 	}
 }

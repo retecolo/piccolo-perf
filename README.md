@@ -111,12 +111,34 @@ Total: 40 bytes
 
 ## Installation
 
+### One-line installer (recommended)
+
+Automatically detects your OS and architecture, downloads the latest release, verifies the checksum, and installs to `/usr/local/bin`:
+
+```bash
+/bin/sh -c "$(curl -fsSL https://raw.githubusercontent.com/buraglio/tiny-twamp/main/install.sh)"
+```
+
+Supports Linux, macOS, FreeBSD, OpenBSD, NetBSD, DragonFly BSD, and Solaris across amd64, arm64, arm, 386, mips, ppc64le, riscv64, and s390x.
+
+### Pre-built binaries
+
+Download the latest release for your platform from the [releases page](https://github.com/buraglio/tiny-twamp/releases/latest), extract, and place the binary in your `$PATH`:
+
+```bash
+# Example: Linux amd64
+curl -fsSL https://github.com/buraglio/tiny-twamp/releases/latest/download/tinytwamp_linux_amd64.tar.gz \
+  | tar -xz
+sudo install -m 755 tinytwamp /usr/local/bin/
+```
+
+### Build from source
+
 ```bash
 git clone https://github.com/buraglio/tiny-twamp.git
 cd tiny-twamp
 go build -o tinytwamp .
-# Optional system-wide install:
-sudo cp tinytwamp /usr/local/bin/
+sudo install -m 755 tinytwamp /usr/local/bin/
 ```
 
 ## Usage

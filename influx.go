@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
@@ -45,6 +46,51 @@ func lineProtocol(r ProbeResult) string {
 	)
 
 	return fmt.Sprintf("twamp_rtt,%s %s %d", tags, fields, r.SentAt.UnixNano())
+}
+
+// lineProtocolResult formats a MeasureResult as an InfluxDB v2 Line Protocol line.
+func lineProtocolResult(r MeasureResult) string {
+	escape := func(s string) string {
+		s = strings.ReplaceAll(s, " ", `\ `)
+		s = strings.ReplaceAll(s, ",", `\,`)
+		s = strings.ReplaceAll(s, "=", `\=`)
+		return s
+	}
+
+	// Base tags
+	tagParts := []string{
+		"source=" + escape(r.Source),
+		"target=" + escape(r.Target),
+		"topology=" + escape(r.Topology),
+		"site=" + escape(r.Site),
+	}
+	// Additional tags from result (sorted for determinism)
+	tagKeys := make([]string, 0, len(r.Tags))
+	for k := range r.Tags {
+		tagKeys = append(tagKeys, k)
+	}
+	sort.Strings(tagKeys)
+	for _, k := range tagKeys {
+		tagParts = append(tagParts, escape(k)+"="+escape(r.Tags[k]))
+	}
+
+	// Fields
+	fieldKeys := make([]string, 0, len(r.Fields))
+	for k := range r.Fields {
+		fieldKeys = append(fieldKeys, k)
+	}
+	sort.Strings(fieldKeys)
+	fieldParts := make([]string, 0, len(fieldKeys))
+	for _, k := range fieldKeys {
+		fieldParts = append(fieldParts, fmt.Sprintf("%s=%.3f", escape(k), r.Fields[k]))
+	}
+
+	return fmt.Sprintf("%s,%s %s %d",
+		r.Measurement,
+		strings.Join(tagParts, ","),
+		strings.Join(fieldParts, ","),
+		r.SentAt.UnixNano(),
+	)
 }
 
 // InfluxWriter batches ProbeResults and flushes to InfluxDB.
@@ -118,6 +164,64 @@ func (w *InfluxWriter) run(ctx context.Context, results <-chan ProbeResult) {
 				shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 				defer cancel()
 				if err := w.write(shutdownCtx, body); err != nil {
+					w.logger.Printf("[InfluxWriter] shutdown flush error: %v", err)
+				}
+			}
+			return
+		}
+	}
+}
+
+// runResults reads MeasureResults from ch, batches, and flushes to InfluxDB.
+func (w *InfluxWriter) runResults(ctx context.Context, results <-chan MeasureResult) {
+	const maxBatch = 100
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	var batch []string
+
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		body := strings.Join(batch, "\n")
+		batch = batch[:0]
+		if err := w.write(ctx, body); err != nil {
+			w.logger.Printf("[InfluxWriter] write error: %v", err)
+		}
+	}
+
+	for {
+		select {
+		case r, ok := <-results:
+			if !ok {
+				flush()
+				return
+			}
+			batch = append(batch, lineProtocolResult(r))
+			if len(batch) >= maxBatch {
+				flush()
+			}
+		case <-ticker.C:
+			flush()
+		case <-ctx.Done():
+			for {
+				select {
+				case r, ok := <-results:
+					if !ok {
+						goto done
+					}
+					batch = append(batch, lineProtocolResult(r))
+				default:
+					goto done
+				}
+			}
+		done:
+			if len(batch) > 0 {
+				body := strings.Join(batch, "\n")
+				shutCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				if err := w.write(shutCtx, body); err != nil {
 					w.logger.Printf("[InfluxWriter] shutdown flush error: %v", err)
 				}
 			}

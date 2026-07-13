@@ -669,6 +669,36 @@ func TestExporterTLSFlagValidation(t *testing.T) {
 // MeasureResult
 // ============================================================================
 
+func TestLineProtocolResultFormat(t *testing.T) {
+	r := MeasureResult{
+		Measurement: "piccolo_twamp",
+		Source:      "probe-a",
+		Target:      "probe-b",
+		Site:        "us-east",
+		Topology:    "mesh",
+		Tags:        map[string]string{"method": "native"},
+		Fields:      map[string]float64{"rtt_avg_ms": 2.5, "packets_sent": 5},
+		SentAt:      time.Unix(1_000_000, 0).UTC(),
+	}
+	line := lineProtocolResult(r)
+	if !strings.HasPrefix(line, "piccolo_twamp,") {
+		t.Errorf("line should start with piccolo_twamp,, got: %s", line)
+	}
+	if !strings.Contains(line, "source=probe-a") {
+		t.Errorf("missing source tag: %s", line)
+	}
+	if !strings.Contains(line, "method=native") {
+		t.Errorf("missing method tag: %s", line)
+	}
+	if !strings.Contains(line, "rtt_avg_ms=2.500") {
+		t.Errorf("missing rtt_avg_ms field: %s", line)
+	}
+	wantTs := fmt.Sprintf("%d", time.Unix(1_000_000, 0).UnixNano())
+	if !strings.HasSuffix(strings.TrimSpace(line), wantTs) {
+		t.Errorf("line should end with timestamp %s, got: %s", wantTs, line)
+	}
+}
+
 func TestMeasureResultFields(t *testing.T) {
 	r := MeasureResult{
 		Measurement: "twamp",

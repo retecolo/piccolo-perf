@@ -664,3 +664,29 @@ func TestExporterTLSFlagValidation(t *testing.T) {
 		t.Errorf("expected no error when both are empty, got %v", err)
 	}
 }
+
+// ============================================================================
+// MeasureResult
+// ============================================================================
+
+func TestMeasureResultFields(t *testing.T) {
+	r := MeasureResult{
+		Measurement: "twamp",
+		Source:      "a",
+		Target:      "b",
+		Site:        "east",
+		Topology:    "mesh",
+		Tags:        map[string]string{"method": "native"},
+		Fields:      map[string]float64{"rtt_avg_ms": 1.5},
+		SentAt:      time.Unix(1_000_000, 0),
+	}
+	if r.Measurement != "twamp" {
+		t.Errorf("Measurement = %q, want twamp", r.Measurement)
+	}
+	if r.Fields["rtt_avg_ms"] != 1.5 {
+		t.Errorf("Fields[rtt_avg_ms] = %v, want 1.5", r.Fields["rtt_avg_ms"])
+	}
+	if r.Tags["method"] != "native" {
+		t.Errorf("Tags[method] = %q, want native", r.Tags["method"])
+	}
+}

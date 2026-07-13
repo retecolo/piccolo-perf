@@ -699,6 +699,17 @@ func TestLineProtocolResultFormat(t *testing.T) {
 	}
 }
 
+// ============================================================================
+// TwampMeasurer
+// ============================================================================
+
+func TestTwampMeasurerName(t *testing.T) {
+	m := &TwampMeasurer{hostname: "probe-a", logFile: nil}
+	if m.Name() != "twamp" {
+		t.Errorf("Name() = %q, want twamp", m.Name())
+	}
+}
+
 func TestMeasureResultFields(t *testing.T) {
 	r := MeasureResult{
 		Measurement: "twamp",

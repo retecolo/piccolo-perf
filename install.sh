@@ -1,14 +1,14 @@
 #!/bin/sh
-# TinyTWAMP installer
-# Usage: /bin/sh -c "$(curl -fsSL https://raw.githubusercontent.com/buraglio/tiny-twamp/main/install.sh)"
+# piccolo-perf installer
+# Usage: /bin/sh -c "$(curl -fsSL https://raw.githubusercontent.com/buraglio/piccolo-perf/main/install.sh)"
 #
 # Installs the latest tinytwamp release binary to /usr/local/bin (or ~/bin if not writable).
 # Supports Linux, macOS, FreeBSD, OpenBSD, NetBSD, DragonFly BSD, Solaris.
 
 set -e
 
-REPO="buraglio/tiny-twamp"
-BINARY="tinytwamp"
+REPO="buraglio/piccolo-perf"
+BINARY="piccolo-perf"
 INSTALL_DIR="/usr/local/bin"
 
 # ── Helpers ────────────────────────────────────────────────────────────────────

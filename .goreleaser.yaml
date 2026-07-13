@@ -1,6 +1,6 @@
 version: 2
 
-project_name: tinytwamp
+project_name: piccolo-perf
 
 before:
   hooks:

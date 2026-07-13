@@ -1,4 +1,4 @@
-module github.com/buraglio/tiny-twamp
+module github.com/buraglio/piccolo-perf
 
 go 1.25.0
 

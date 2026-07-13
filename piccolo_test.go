@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"net"
@@ -755,5 +756,49 @@ func TestPrometheusStoreUpdateResult(t *testing.T) {
 	}
 	if !strings.Contains(body, `method="native"`) {
 		t.Errorf("expected method label in metrics, got:\n%s", body)
+	}
+}
+
+// ============================================================================
+// DnsMeasurer
+// ============================================================================
+
+func TestDnsMeasurerName(t *testing.T) {
+	m := &DnsMeasurer{hostname: "probe-a"}
+	if m.Name() != "dns" {
+		t.Errorf("Name() = %q, want dns", m.Name())
+	}
+}
+
+func TestDnsMeasurerRun(t *testing.T) {
+	m := &DnsMeasurer{hostname: "probe-a"}
+	cfg := MeasurerConfig{
+		Timeout:   2 * time.Second,
+		Resolvers: []string{"8.8.8.8"},
+		Names:     []string{"example.com"},
+	}
+	ctx := context.Background()
+	results, err := m.Run(ctx, HostEntry{Name: "dns", Address: ""}, cfg)
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected at least one result")
+	}
+	r := results[0]
+	if r.Measurement != "piccolo_dns" {
+		t.Errorf("Measurement = %q, want piccolo_dns", r.Measurement)
+	}
+	if _, ok := r.Fields["dns_rtt_ms"]; !ok {
+		t.Error("missing dns_rtt_ms field")
+	}
+	if _, ok := r.Fields["dns_success"]; !ok {
+		t.Error("missing dns_success field")
+	}
+	if r.Tags["resolver"] == "" {
+		t.Error("missing resolver tag")
+	}
+	if r.Tags["name"] == "" {
+		t.Error("missing name tag")
 	}
 }

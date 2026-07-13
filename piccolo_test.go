@@ -720,3 +720,29 @@ func TestMeasureResultFields(t *testing.T) {
 		t.Errorf("Tags[method] = %q, want native", r.Tags["method"])
 	}
 }
+
+func TestPrometheusStoreUpdateResult(t *testing.T) {
+	store := newPrometheusStore("probe-a")
+	r := MeasureResult{
+		Measurement: "piccolo_bw",
+		Source:      "probe-a",
+		Target:      "probe-b",
+		Site:        "us-east",
+		Topology:    "mesh",
+		Tags:        map[string]string{"method": "native"},
+		Fields:      map[string]float64{"bw_tx_mbps": 95.5},
+		SentAt:      time.Now(),
+	}
+	// Must not panic; metric must appear in output
+	store.UpdateResult(r)
+
+	rec := httptest.NewRecorder()
+	store.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, "piccolo_bw_bw_tx_mbps") {
+		t.Errorf("expected piccolo_bw_bw_tx_mbps in metrics, got:\n%s", body)
+	}
+	if !strings.Contains(body, `method="native"`) {
+		t.Errorf("expected method label in metrics, got:\n%s", body)
+	}
+}

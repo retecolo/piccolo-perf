@@ -760,6 +760,53 @@ func TestPrometheusStoreUpdateResult(t *testing.T) {
 }
 
 // ============================================================================
+// BwMeasurer
+// ============================================================================
+
+func TestBwMeasurerName(t *testing.T) {
+	m := &BwMeasurer{hostname: "probe-a"}
+	if m.Name() != "bw" {
+		t.Errorf("Name() = %q, want bw", m.Name())
+	}
+}
+
+func TestBwNativeLoopback(t *testing.T) {
+	// Start a BwServer on a random port, run BwMeasurer against it.
+	srv := &BwServer{}
+	port, err := srv.Start(0) // 0 = OS picks port
+	if err != nil {
+		t.Fatalf("BwServer.Start: %v", err)
+	}
+	defer srv.Stop()
+
+	m := &BwMeasurer{hostname: "probe-a"}
+	cfg := MeasurerConfig{
+		Duration:     500 * time.Millisecond,
+		Timeout:      5 * time.Second,
+		PreferIperf3: false,
+	}
+	target := HostEntry{Name: "loopback", Address: fmt.Sprintf("127.0.0.1:%d", port)}
+	ctx := context.Background()
+	results, err := m.Run(ctx, target, cfg)
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected at least one result")
+	}
+	r := results[0]
+	if r.Measurement != "piccolo_bw" {
+		t.Errorf("Measurement = %q, want piccolo_bw", r.Measurement)
+	}
+	if r.Fields["bw_tx_mbps"] <= 0 {
+		t.Errorf("bw_tx_mbps = %v, want > 0", r.Fields["bw_tx_mbps"])
+	}
+	if r.Tags["method"] != "native" {
+		t.Errorf("Tags[method] = %q, want native", r.Tags["method"])
+	}
+}
+
+// ============================================================================
 // DnsMeasurer
 // ============================================================================
 

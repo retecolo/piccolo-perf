@@ -827,15 +827,60 @@ var (
 )
 
 func main() {
-	flag.Parse()
-
-	if *printVersion {
-		fmt.Println(version)
-		os.Exit(0)
+	if len(os.Args) < 2 {
+		printUsage()
+		os.Exit(1)
 	}
 
-	synced := !*noSync
+	// Backward compat: old flat -mode flag
+	if os.Args[1] == "-mode" || os.Args[1] == "--mode" {
+		fmt.Fprintf(os.Stderr, "Warning: -mode flag is deprecated. Use subcommands: piccolo-perf <twamp|bw|trace|mtu|dns|agent>\n")
+		flag.Parse()
+		runLegacyMode()
+		return
+	}
 
+	sub := os.Args[1]
+	os.Args = append([]string{os.Args[0]}, os.Args[2:]...)
+
+	switch sub {
+	case "twamp":
+		runTwampSubcommand()
+	case "bw":
+		runBwSubcommand()
+	case "trace":
+		runTraceSubcommand()
+	case "mtu":
+		runMtuSubcommand()
+	case "dns":
+		runDnsSubcommand()
+	case "agent":
+		runAgentSubcommand()
+	case "version", "--version", "-version":
+		fmt.Println(version)
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown subcommand %q\n", sub)
+		printUsage()
+		os.Exit(1)
+	}
+}
+
+func printUsage() {
+	fmt.Fprintf(os.Stderr, `piccolo-perf — network performance toolkit
+
+Usage:
+  piccolo-perf twamp  [client|server|agent|exporter]
+  piccolo-perf bw     [client|server]
+  piccolo-perf trace  -target <addr> [flags]
+  piccolo-perf mtu    -target <addr> [flags]
+  piccolo-perf dns    -resolver <ip> -name <fqdn> [flags]
+  piccolo-perf agent  -config-url <url> [flags]
+  piccolo-perf version
+`)
+}
+
+func runLegacyMode() {
+	synced := !*noSync
 	var logFile *os.File
 	if *logFilePath != "" {
 		var err error
@@ -846,7 +891,6 @@ func main() {
 		}
 		defer logFile.Close()
 	}
-
 	switch *mode {
 	case "server":
 		if *runAsDaemon {
@@ -864,21 +908,18 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
 			os.Exit(1)
 		}
-
 	case "client":
 		client := NewClient(*serverAddr, logFile, *count, *interval, *timeout, *port, *paddingSize, synced)
 		if err := client.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "Client error: %v\n", err)
 			os.Exit(1)
 		}
-
 	case "agent":
 		if *configURL == "" {
 			fmt.Fprintf(os.Stderr, "agent mode requires -config-url\n")
 			os.Exit(1)
 		}
 		runAgent(*port, *configURL, *agentHostname, *configRefresh, synced, logFile)
-
 	case "exporter":
 		if *configURL == "" {
 			fmt.Fprintf(os.Stderr, "exporter mode requires -config-url\n")
@@ -887,11 +928,228 @@ func main() {
 		runExporter(*port, *configURL, *agentHostname, *configRefresh,
 			*probeMode, *metricsAddr, *metricsTLSCert, *metricsTLSKey,
 			synced, logFile)
-
 	default:
-		fmt.Fprintf(os.Stderr, "Invalid mode %q. Use 'client', 'server', 'agent', or 'exporter'\n", *mode)
+		fmt.Fprintf(os.Stderr, "Invalid mode %q\n", *mode)
 		os.Exit(1)
 	}
+}
+
+func runTwampSubcommand() {
+	fs := flag.NewFlagSet("twamp", flag.ExitOnError)
+	twampMode   := fs.String("mode", "client", "client, server, agent, or exporter")
+	server      := fs.String("server", "localhost", "server address")
+	port        := fs.Int("port", defaultPort, "UDP port")
+	count       := fs.Int("count", 10, "packets to send")
+	interval    := fs.Duration("interval", time.Second, "interval between packets")
+	timeout     := fs.Duration("timeout", 5*time.Second, "per-packet timeout")
+	padding     := fs.Int("padding", 0, "padding bytes")
+	noSync      := fs.Bool("no-sync", false, "assert clock unsynchronized")
+	rateLimit   := fs.Int("rate-limit", 0, "max pkts/sec per source IP")
+	allowed     := fs.String("allowed", "", "CIDR allowlist")
+	logPath     := fs.String("logfile", "", "log file path")
+	configURL   := fs.String("config-url", "", "topology config URL (agent/exporter mode)")
+	hostname    := fs.String("hostname", "", "override hostname")
+	cfgRefresh  := fs.Duration("config-refresh", 0, "config refresh interval")
+	probeMode   := fs.String("probe-mode", "background", "exporter probe mode")
+	metricsAddr := fs.String("metrics-addr", ":9862", "Prometheus metrics address")
+	metricsCert := fs.String("metrics-tls-cert", "", "TLS cert file")
+	metricsKey  := fs.String("metrics-tls-key", "", "TLS key file")
+	fs.Parse(os.Args[1:])
+
+	synced := !*noSync
+	var logFile *os.File
+	if *logPath != "" {
+		var err error
+		logFile, err = os.OpenFile(*logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "log file: %v\n", err)
+			os.Exit(1)
+		}
+		defer logFile.Close()
+	}
+
+	switch *twampMode {
+	case "server":
+		al, err := parseAllowlist(*allowed)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		rl := newRateLimiter(*rateLimit)
+		srv := NewServer(logFile, rl, al, synced)
+		if err := srv.Start(*port); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "client":
+		c := NewClient(*server, logFile, *count, *interval, *timeout, *port, *padding, synced)
+		if err := c.Run(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "agent":
+		if *configURL == "" {
+			fmt.Fprintln(os.Stderr, "agent requires -config-url")
+			os.Exit(1)
+		}
+		runAgent(*port, *configURL, *hostname, *cfgRefresh, synced, logFile)
+	case "exporter":
+		if *configURL == "" {
+			fmt.Fprintln(os.Stderr, "exporter requires -config-url")
+			os.Exit(1)
+		}
+		runExporter(*port, *configURL, *hostname, *cfgRefresh, *probeMode, *metricsAddr, *metricsCert, *metricsKey, synced, logFile)
+	default:
+		fmt.Fprintf(os.Stderr, "unknown twamp mode %q\n", *twampMode)
+		os.Exit(1)
+	}
+}
+
+func runBwSubcommand() {
+	fs := flag.NewFlagSet("bw", flag.ExitOnError)
+	bwMode   := fs.String("mode", "client", "client or server")
+	target   := fs.String("target", "", "target address:port (client mode)")
+	port     := fs.Int("port", 5201, "listen port (server mode)")
+	duration := fs.Duration("duration", 5*time.Second, "test duration")
+	iperf3   := fs.Bool("prefer-iperf3", false, "use iperf3 when available")
+	fs.Parse(os.Args[1:])
+
+	switch *bwMode {
+	case "server":
+		srv := &BwServer{}
+		p, err := srv.Start(*port)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Printf("piccolo-perf bw server listening on :%d\n", p)
+		select {} // block forever
+	case "client":
+		if *target == "" {
+			fmt.Fprintln(os.Stderr, "bw client requires -target")
+			os.Exit(1)
+		}
+		h, _ := os.Hostname()
+		m := &BwMeasurer{hostname: h}
+		cfg := MeasurerConfig{Duration: *duration, PreferIperf3: *iperf3, Timeout: 10 * time.Second}
+		results, err := m.Run(context.Background(), HostEntry{Name: *target, Address: *target}, cfg)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		for _, r := range results {
+			fmt.Printf("method=%s tx=%.2f Mbps\n", r.Tags["method"], r.Fields["bw_tx_mbps"])
+		}
+	default:
+		fmt.Fprintf(os.Stderr, "unknown bw mode %q\n", *bwMode)
+		os.Exit(1)
+	}
+}
+
+func runTraceSubcommand() {
+	fs := flag.NewFlagSet("trace", flag.ExitOnError)
+	target  := fs.String("target", "", "target address (required)")
+	maxHops := fs.Int("max-hops", 30, "maximum hops")
+	probes  := fs.Int("probes", 1, "probes per hop")
+	timeout := fs.Duration("timeout", 2*time.Second, "per-hop timeout")
+	fs.Parse(os.Args[1:])
+	if *target == "" {
+		fmt.Fprintln(os.Stderr, "trace requires -target")
+		os.Exit(1)
+	}
+	h, _ := os.Hostname()
+	m := &TraceMeasurer{hostname: h}
+	cfg := MeasurerConfig{MaxHops: *maxHops, ProbesPerHop: *probes, Timeout: *timeout}
+	results, err := m.Run(context.Background(), HostEntry{Name: *target, Address: *target}, cfg)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	for _, r := range results {
+		if r.Tags["skipped"] == "true" {
+			fmt.Println("traceroute skipped: requires CAP_NET_RAW")
+			return
+		}
+		fmt.Printf("hops=%v complete=%v\n", r.Fields["trace_hops"], r.Fields["trace_complete"])
+		for i := 1; i <= int(r.Fields["trace_hops"]); i++ {
+			key := fmt.Sprintf("hop_%d_rtt_ms", i)
+			fmt.Printf("  hop %2d  %.3f ms\n", i, r.Fields[key])
+		}
+	}
+}
+
+func runMtuSubcommand() {
+	fs := flag.NewFlagSet("mtu", flag.ExitOnError)
+	target  := fs.String("target", "", "target address (required)")
+	ceiling := fs.Int("ceiling", 1500, "MTU ceiling bytes")
+	timeout := fs.Duration("timeout", 2*time.Second, "probe timeout")
+	fs.Parse(os.Args[1:])
+	if *target == "" {
+		fmt.Fprintln(os.Stderr, "mtu requires -target")
+		os.Exit(1)
+	}
+	h, _ := os.Hostname()
+	m := &MtuMeasurer{hostname: h}
+	cfg := MeasurerConfig{Ceiling: *ceiling, Timeout: *timeout}
+	results, err := m.Run(context.Background(), HostEntry{Name: *target, Address: *target}, cfg)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	for _, r := range results {
+		if r.Tags["skipped"] == "true" {
+			fmt.Println("MTU discovery skipped: requires CAP_NET_RAW")
+			return
+		}
+		fmt.Printf("effective MTU: %v bytes (ceiling: %v)\n",
+			int(r.Fields["mtu_effective_bytes"]), int(r.Fields["mtu_ceiling_bytes"]))
+	}
+}
+
+func runDnsSubcommand() {
+	fs := flag.NewFlagSet("dns", flag.ExitOnError)
+	resolver := fs.String("resolver", "8.8.8.8", "DNS resolver IP")
+	name     := fs.String("name", "example.com", "name to resolve")
+	timeout  := fs.Duration("timeout", 2*time.Second, "query timeout")
+	fs.Parse(os.Args[1:])
+	h, _ := os.Hostname()
+	m := &DnsMeasurer{hostname: h}
+	cfg := MeasurerConfig{Resolvers: []string{*resolver}, Names: []string{*name}, Timeout: *timeout}
+	results, err := m.Run(context.Background(), HostEntry{}, cfg)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	for _, r := range results {
+		fmt.Printf("resolver=%s name=%s rtt=%.3fms success=%v\n",
+			r.Tags["resolver"], r.Tags["name"], r.Fields["dns_rtt_ms"], r.Fields["dns_success"] == 1.0)
+	}
+}
+
+func runAgentSubcommand() {
+	fs := flag.NewFlagSet("agent", flag.ExitOnError)
+	configURL  := fs.String("config-url", "", "topology config URL (required)")
+	hostname   := fs.String("hostname", "", "override hostname")
+	cfgRefresh := fs.Duration("config-refresh", 0, "config refresh interval")
+	port       := fs.Int("port", defaultPort, "TWAMP UDP port")
+	noSync     := fs.Bool("no-sync", false, "assert clock unsynchronized")
+	logPath    := fs.String("logfile", "", "log file path")
+	fs.Parse(os.Args[1:])
+	if *configURL == "" {
+		fmt.Fprintln(os.Stderr, "agent requires -config-url")
+		os.Exit(1)
+	}
+	var logFile *os.File
+	if *logPath != "" {
+		var err error
+		logFile, err = os.OpenFile(*logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		defer logFile.Close()
+	}
+	runAgent(*port, *configURL, *hostname, *cfgRefresh, !*noSync, logFile)
 }
 
 // runServerAsDaemon and platformHandleShutdown are implemented in

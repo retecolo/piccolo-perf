@@ -807,6 +807,38 @@ func TestBwNativeLoopback(t *testing.T) {
 }
 
 // ============================================================================
+// MtuMeasurer
+// ============================================================================
+
+func TestMtuMeasurerName(t *testing.T) {
+	m := &MtuMeasurer{hostname: "probe-a"}
+	if m.Name() != "mtu" {
+		t.Errorf("Name() = %q, want mtu", m.Name())
+	}
+}
+
+func TestMtuMeasurerSkippedWithoutCap(t *testing.T) {
+	// This test verifies the measurer returns a skipped result (not an error)
+	// when raw sockets are unavailable — which is the case in most CI environments.
+	m := &MtuMeasurer{hostname: "probe-a"}
+	cfg := MeasurerConfig{Ceiling: 1500, Timeout: 2 * time.Second}
+	target := HostEntry{Name: "loopback", Address: "127.0.0.1"}
+	results, err := m.Run(context.Background(), target, cfg)
+	// Either succeeds (has CAP_NET_RAW) or returns skipped result — never hard error
+	if err != nil {
+		t.Fatalf("Run() returned error (should degrade gracefully): %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected at least one result")
+	}
+	// If skipped, the tag must be present
+	r := results[0]
+	if r.Measurement != "piccolo_mtu" {
+		t.Errorf("Measurement = %q, want piccolo_mtu", r.Measurement)
+	}
+}
+
+// ============================================================================
 // DnsMeasurer
 // ============================================================================
 

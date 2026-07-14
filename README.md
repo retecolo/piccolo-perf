@@ -24,18 +24,18 @@ TWAMP-Light is the RFC 5357 §5 profile — no TCP control session, pure UDP tes
 Detects OS and architecture, downloads the latest release, verifies the checksum, and installs to `/usr/local/bin`:
 
 ```sh
-/bin/sh -c "$(curl -fsSL https://raw.githubusercontent.com/buraglio/piccolo-perf/main/install.sh)"
+/bin/sh -c "$(curl -fsSL https://raw.githubusercontent.com/retecolo/piccolo-perf/main/install.sh)"
 ```
 
 Supported platforms: Linux, macOS, FreeBSD, OpenBSD, NetBSD, DragonFly BSD, Solaris — across amd64, arm64, arm, 386, mips, mips64, mipsle, ppc64le, riscv64, s390x.
 
 ### Pre-built binaries
 
-Download from the [releases page](https://github.com/buraglio/piccolo-perf/releases/latest):
+Download from the [releases page](https://github.com/retecolo/piccolo-perf/releases/latest):
 
 ```sh
 # Linux arm64 example
-curl -fsSL https://github.com/buraglio/piccolo-perf/releases/latest/download/piccolo-perf_linux_arm64.tar.gz \
+curl -fsSL https://github.com/retecolo/piccolo-perf/releases/latest/download/piccolo-perf_linux_arm64.tar.gz \
   | tar -xz
 sudo install -m 755 piccolo-perf /usr/local/bin/
 ```
@@ -43,7 +43,7 @@ sudo install -m 755 piccolo-perf /usr/local/bin/
 ### Build from source
 
 ```sh
-git clone https://github.com/buraglio/piccolo-perf.git
+git clone https://github.com/retecolo/piccolo-perf.git
 cd piccolo-perf
 go build -o piccolo-perf .
 sudo install -m 755 piccolo-perf /usr/local/bin/

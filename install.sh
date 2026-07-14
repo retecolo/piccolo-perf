@@ -98,9 +98,14 @@ main() {
 
     info "Detecting platform: ${OS}/${ARCH}"
 
-    VERSION="$(latest_version)"
-    [ -n "$VERSION" ] || die "Could not determine latest release version"
-    info "Latest release: ${VERSION}"
+    if [ -n "${PICCOLO_VERSION:-}" ]; then
+        VERSION="$PICCOLO_VERSION"
+        info "Using pinned version: ${VERSION}"
+    else
+        VERSION="$(latest_version)"
+        [ -n "$VERSION" ] || die "Could not determine latest release version. Set PICCOLO_VERSION=v1.0.1 to install a specific version."
+        info "Latest release: ${VERSION}"
+    fi
 
     # Strip leading 'v' for the filename (GoReleaser uses the version number without 'v')
     VER="${VERSION#v}"

@@ -2,8 +2,20 @@ package main
 
 import (
 	"context"
+	"net"
 	"time"
 )
+
+// preferIPv6 returns the first IPv6 address from ips, falling back to the
+// first IPv4 address if no IPv6 address is present.
+func preferIPv6(ips []net.IP) net.IP {
+	for _, ip := range ips {
+		if ip.To4() == nil {
+			return ip
+		}
+	}
+	return ips[0]
+}
 
 // Measurer is implemented by every measurement type the agent can schedule.
 type Measurer interface {

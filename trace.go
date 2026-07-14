@@ -56,6 +56,7 @@ func (m *TraceMeasurer) Run(ctx context.Context, target HostEntry, cfg MeasurerC
 }
 
 // trace resolves addr and dispatches to the appropriate IP-family prober.
+// When a hostname resolves to both A and AAAA records, IPv6 is preferred.
 func (m *TraceMeasurer) trace(ctx context.Context, addr string, maxHops, probes int, timeout time.Duration) (map[string]float64, int, error) {
 	ip := net.ParseIP(addr)
 	if ip == nil {
@@ -63,7 +64,7 @@ func (m *TraceMeasurer) trace(ctx context.Context, addr string, maxHops, probes 
 		if err != nil || len(ips) == 0 {
 			return nil, 0, fmt.Errorf("resolve: %w", err)
 		}
-		ip = ips[0]
+		ip = preferIPv6(ips)
 	}
 
 	if ip.To4() != nil {

@@ -54,6 +54,7 @@ func (m *MtuMeasurer) Run(ctx context.Context, target HostEntry, cfg MeasurerCon
 }
 
 // discover resolves addr and dispatches to the appropriate IP-family prober.
+// When a hostname resolves to both A and AAAA records, IPv6 is preferred.
 func (m *MtuMeasurer) discover(ctx context.Context, addr string, ceiling int, timeout time.Duration) (int, error) {
 	ip := net.ParseIP(addr)
 	if ip == nil {
@@ -61,7 +62,7 @@ func (m *MtuMeasurer) discover(ctx context.Context, addr string, ceiling int, ti
 		if err != nil || len(ips) == 0 {
 			return 0, fmt.Errorf("resolve %s: %w", addr, err)
 		}
-		ip = ips[0]
+		ip = preferIPv6(ips)
 	}
 
 	if ip.To4() != nil {
@@ -153,13 +154,13 @@ func (m *MtuMeasurer) discoverV4(ctx context.Context, ip net.IP, ceiling int, ti
 func (m *MtuMeasurer) discoverV6(ctx context.Context, ip net.IP, ceiling int, timeout time.Duration) (int, error) {
 	dst := &net.IPAddr{IP: ip}
 
-	pc, err := net.ListenPacket("ip6:ipv6-icmp", "::")
+	pc, err := icmp.ListenPacket("ip6:ipv6-icmp", "::")
 	if err != nil {
 		return 0, fmt.Errorf("raw socket (IPv6): %w", err)
 	}
 	defer pc.Close()
 
-	p := pc.(*icmp.PacketConn).IPv6PacketConn()
+	p := pc.IPv6PacketConn()
 
 	lo, hi := 1280, ceiling // IPv6 minimum MTU is 1280
 	effective := 0

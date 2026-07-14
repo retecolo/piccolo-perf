@@ -123,5 +123,9 @@ func (m *TraceMeasurer) trace(ctx context.Context, addr string, maxHops, probes 
 		}
 	}
 
+	if _, ok := fields["trace_complete"]; !ok {
+		fields["trace_complete"] = 0.0
+	}
+
 	return fields, reached, nil
 }

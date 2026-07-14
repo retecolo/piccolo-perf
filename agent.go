@@ -228,6 +228,11 @@ func parseAgentConfig(data []byte) (AgentConfig, error) {
 		if ceiling <= 0 {
 			ceiling = 1500
 		}
+		// For TWAMP, packet_timeout is the canonical timeout field
+		timeout := mTimeout
+		if rm.Type == "twamp" && pktTimeout > 0 {
+			timeout = pktTimeout
+		}
 		specs = append(specs, MeasurementSpec{
 			Type:     rm.Type,
 			Interval: interval,
@@ -235,7 +240,7 @@ func parseAgentConfig(data []byte) (AgentConfig, error) {
 			MeasurerConfig: MeasurerConfig{
 				BurstSize:     rmBurstSize,
 				BurstInterval: burstIntervalSpec,
-				Timeout:       mTimeout,
+				Timeout:       timeout,
 				Padding:       rm.Padding,
 				Duration:      dur,
 				PreferIperf3:  rm.PreferIperf3,
@@ -246,7 +251,6 @@ func parseAgentConfig(data []byte) (AgentConfig, error) {
 				Names:         rm.Names,
 			},
 		})
-		_ = pktTimeout // PacketTimeout goes into BurstInterval for TWAMP
 	}
 	// If no measurements block, default to TWAMP for backward compat
 	if len(specs) == 0 {
@@ -483,6 +487,22 @@ func runAgent(port int, configURL, hostname string, configRefresh time.Duration,
 		configRefresh = initialCfg.ConfigRefresh
 	}
 
+	// Open local store if configured
+	var localStore *LocalStore
+	if initialCfg.LocalStore.Enabled && initialCfg.LocalStore.Path != "" {
+		maxLines := initialCfg.LocalStore.MaxLines
+		if maxLines <= 0 {
+			maxLines = 10000
+		}
+		ls, err := NewLocalStore(initialCfg.LocalStore.Path, maxLines)
+		if err != nil {
+			logger.Printf("[Agent] local store disabled: %v", err)
+		} else {
+			localStore = ls
+			defer localStore.Close()
+		}
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -514,6 +534,21 @@ func runAgent(port int, configURL, hostname string, configRefresh time.Duration,
 		}
 	}()
 
+	// Goroutine: BwServer (TCP sink for native bandwidth measurements)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		bwSrv := &BwServer{}
+		port, err := bwSrv.Start(5201)
+		if err != nil {
+			logger.Printf("[Agent] BwServer failed to start: %v", err)
+			return
+		}
+		logger.Printf("[Agent] BwServer listening on :%d", port)
+		<-ctx.Done()
+		bwSrv.Stop()
+	}()
+
 	// Goroutine 3: Per-measurer schedulers (one goroutine per MeasurementSpec)
 	// Each scheduler gets its own channel so config updates are broadcast to all.
 	measurers := buildMeasurers(hostname, port, synced, logFile)
@@ -531,7 +566,7 @@ func runAgent(port int, configURL, hostname string, configRefresh time.Duration,
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			runMeasurerScheduler(ctx, m, spec, ch, resultsCh, hostname, logger, initialCfg.HideSkipped)
+			runMeasurerScheduler(ctx, m, spec, ch, resultsCh, hostname, logger, initialCfg.HideSkipped, localStore)
 		}()
 	}
 
@@ -584,7 +619,7 @@ func buildMeasurers(hostname string, port int, synced bool, logFile *os.File) ma
 
 // runMeasurerScheduler drives a single Measurer on its own ticker.
 // It listens for updated AgentConfigs on configs and forwards MeasureResults to results.
-func runMeasurerScheduler(ctx context.Context, m Measurer, spec MeasurementSpec, configs <-chan AgentConfig, results chan<- MeasureResult, hostname string, logger *log.Logger, hideSkipped bool) {
+func runMeasurerScheduler(ctx context.Context, m Measurer, spec MeasurementSpec, configs <-chan AgentConfig, results chan<- MeasureResult, hostname string, logger *log.Logger, hideSkipped bool, localStore *LocalStore) {
 	ticker := time.NewTicker(spec.Interval)
 	defer ticker.Stop()
 	var cfg AgentConfig
@@ -611,6 +646,11 @@ func runMeasurerScheduler(ctx context.Context, m Measurer, spec MeasurementSpec,
 					case results <- r:
 					case <-ctx.Done():
 						return
+					}
+					if localStore != nil {
+						if err := localStore.Append(r); err != nil {
+							logger.Printf("[Agent] local store append error: %v", err)
+						}
 					}
 				}
 			}

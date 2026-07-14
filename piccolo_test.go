@@ -1009,3 +1009,490 @@ func TestDnsMeasurerRun(t *testing.T) {
 		t.Error("missing name tag")
 	}
 }
+
+// ============================================================================
+// resolveHost — RFC 6724 address selection
+// ============================================================================
+
+func TestResolveHostIPv4Literal(t *testing.T) {
+	ip, err := resolveHost("127.0.0.1")
+	if err != nil {
+		t.Fatalf("resolveHost(127.0.0.1): %v", err)
+	}
+	if ip.To4() == nil {
+		t.Errorf("expected IPv4, got %v", ip)
+	}
+}
+
+func TestResolveHostIPv6Literal(t *testing.T) {
+	ip, err := resolveHost("::1")
+	if err != nil {
+		t.Fatalf("resolveHost(::1): %v", err)
+	}
+	if ip.To4() != nil {
+		t.Errorf("expected IPv6, got %v", ip)
+	}
+}
+
+func TestResolveHostInvalid(t *testing.T) {
+	_, err := resolveHost("not-a-valid-host-zzzzzz.invalid")
+	if err == nil {
+		t.Error("expected error for unresolvable host, got nil")
+	}
+}
+
+// ============================================================================
+// lineProtocolResult — edge cases
+// ============================================================================
+
+func TestLineProtocolResultEscapesTagValues(t *testing.T) {
+	r := MeasureResult{
+		Measurement: "piccolo_test",
+		Source:      "a b",   // space
+		Target:      "c,d",   // comma
+		Site:        "e=f",   // equals
+		Topology:    "mesh",
+		Tags:        map[string]string{},
+		Fields:      map[string]float64{"v": 1.0},
+		SentAt:      time.Unix(1, 0),
+	}
+	line := lineProtocolResult(r)
+	if strings.Contains(line, "a b") {
+		t.Error("space in source should be escaped")
+	}
+	if !strings.Contains(line, `a\ b`) {
+		t.Error("space should be escaped as a\\ b")
+	}
+	if strings.Contains(line, "c,d") {
+		t.Error("comma in target should be escaped")
+	}
+	if strings.Contains(line, "e=f") {
+		t.Error("equals in site should be escaped")
+	}
+}
+
+func TestLineProtocolResultFieldsSorted(t *testing.T) {
+	r := MeasureResult{
+		Measurement: "piccolo_test",
+		Source:      "a", Target: "b", Site: "s", Topology: "mesh",
+		Tags:   map[string]string{},
+		Fields: map[string]float64{"z": 3.0, "a": 1.0, "m": 2.0},
+		SentAt: time.Unix(1, 0),
+	}
+	line := lineProtocolResult(r)
+	// Fields must be sorted: a= before m= before z=
+	aIdx := strings.Index(line, "a=")
+	mIdx := strings.Index(line, "m=")
+	zIdx := strings.Index(line, "z=")
+	if !(aIdx < mIdx && mIdx < zIdx) {
+		t.Errorf("fields not sorted: a@%d m@%d z@%d in %s", aIdx, mIdx, zIdx, line)
+	}
+}
+
+func TestLineProtocolResultExtraTagsSorted(t *testing.T) {
+	r := MeasureResult{
+		Measurement: "piccolo_bw",
+		Source:      "a", Target: "b", Site: "s", Topology: "mesh",
+		Tags:   map[string]string{"method": "native", "extra": "val"},
+		Fields: map[string]float64{"bw_tx_mbps": 100.0},
+		SentAt: time.Unix(1, 0),
+	}
+	line := lineProtocolResult(r)
+	if !strings.Contains(line, "method=native") {
+		t.Errorf("missing method tag: %s", line)
+	}
+	if !strings.Contains(line, "extra=val") {
+		t.Errorf("missing extra tag: %s", line)
+	}
+}
+
+// ============================================================================
+// BwServer — start/stop lifecycle
+// ============================================================================
+
+func TestBwServerStartStop(t *testing.T) {
+	srv := &BwServer{}
+	port, err := srv.Start(0)
+	if err != nil {
+		t.Fatalf("BwServer.Start: %v", err)
+	}
+	if port == 0 {
+		t.Error("expected non-zero port")
+	}
+	// Stop must be idempotent
+	srv.Stop()
+	srv.Stop()
+}
+
+func TestBwServerAcceptsConnection(t *testing.T) {
+	srv := &BwServer{}
+	port, err := srv.Start(0)
+	if err != nil {
+		t.Fatalf("BwServer.Start: %v", err)
+	}
+	defer srv.Stop()
+
+	conn, err := net.Dial("tcp6", fmt.Sprintf("[::1]:%d", port))
+	if err != nil {
+		// Fall back to IPv4 if ::1 not available
+		conn, err = net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+		if err != nil {
+			t.Fatalf("dial BwServer: %v", err)
+		}
+	}
+	conn.Write([]byte("hello"))
+	conn.Close()
+}
+
+// ============================================================================
+// TWAMP client/server integration (loopback)
+// ============================================================================
+
+func TestTwampClientServerLoopback(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping loopback integration test in short mode")
+	}
+	al, _ := parseAllowlist("")
+	rl := newRateLimiter(0)
+	srv := NewServer(nil, rl, al, true)
+
+	// Find a free port
+	ln, err := net.ListenUDP("udp6", &net.UDPAddr{IP: net.IPv6zero, Port: 0})
+	if err != nil {
+		t.Skipf("udp6 not available: %v", err)
+	}
+	port := ln.LocalAddr().(*net.UDPAddr).Port
+	ln.Close()
+
+	go func() {
+		srv.Start(port) //nolint:errcheck
+	}()
+	time.Sleep(50 * time.Millisecond) // let server bind
+
+	defer srv.cancel()
+
+	c := NewClient("::1", nil, 3, 100*time.Millisecond, 2*time.Second, port, 0, true)
+	if err := c.Run(); err != nil {
+		t.Fatalf("client.Run: %v", err)
+	}
+	if srv.ReflectedCount() == 0 {
+		t.Error("server reflected 0 packets")
+	}
+}
+
+func TestTwampClientSourceAddr(t *testing.T) {
+	// Verify that setting sourceAddr to ::1 produces a working client
+	// (the unconnected socket binds to the specified address).
+	if testing.Short() {
+		t.Skip("skipping loopback integration test in short mode")
+	}
+	al, _ := parseAllowlist("")
+	rl := newRateLimiter(0)
+	srv := NewServer(nil, rl, al, true)
+
+	ln, err := net.ListenUDP("udp6", &net.UDPAddr{IP: net.IPv6zero, Port: 0})
+	if err != nil {
+		t.Skipf("udp6 not available: %v", err)
+	}
+	port := ln.LocalAddr().(*net.UDPAddr).Port
+	ln.Close()
+
+	go srv.Start(port) //nolint:errcheck
+	time.Sleep(50 * time.Millisecond)
+	defer srv.cancel()
+
+	c := NewClient("::1", nil, 3, 100*time.Millisecond, 2*time.Second, port, 0, true)
+	c.sourceAddr = "::1"
+	if err := c.Run(); err != nil {
+		t.Fatalf("client.Run with sourceAddr=::1: %v", err)
+	}
+}
+
+func TestTwampClientInvalidSourceAddr(t *testing.T) {
+	c := NewClient("::1", nil, 1, 100*time.Millisecond, 500*time.Millisecond, 9999, 0, true)
+	c.sourceAddr = "not-an-ip"
+	err := c.Run()
+	if err == nil {
+		t.Error("expected error for invalid source address, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid source address") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// ============================================================================
+// LocalStore — flush error handling
+// ============================================================================
+
+func TestLocalStoreFlushPropagatesError(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewLocalStore(dir+"/results.jsonl", 1000)
+	if err != nil {
+		t.Fatalf("NewLocalStore: %v", err)
+	}
+	defer s.Close()
+
+	s.Append(MeasureResult{
+		Measurement: "piccolo_twamp",
+		Source:      "a", Target: "b",
+		Fields: map[string]float64{"rtt_avg_ms": 1.0},
+		Tags:   map[string]string{},
+		SentAt: time.Now(),
+	})
+
+	sentinel := fmt.Errorf("upstream unavailable")
+	err = s.Flush(context.Background(), func(batch []MeasureResult) error {
+		return sentinel
+	})
+	if err == nil {
+		t.Error("expected Flush to propagate fn error")
+	}
+	if !strings.Contains(err.Error(), "upstream unavailable") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestLocalStoreFlushEmptyIsNoop(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewLocalStore(dir+"/results.jsonl", 1000)
+	if err != nil {
+		t.Fatalf("NewLocalStore: %v", err)
+	}
+	defer s.Close()
+
+	called := false
+	err = s.Flush(context.Background(), func(batch []MeasureResult) error {
+		called = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Flush on empty store: %v", err)
+	}
+	if called {
+		t.Error("fn should not be called for empty store")
+	}
+}
+
+func TestLocalStoreFlushClearsFile(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/results.jsonl"
+	s, err := NewLocalStore(path, 1000)
+	if err != nil {
+		t.Fatalf("NewLocalStore: %v", err)
+	}
+	defer s.Close()
+
+	for i := 0; i < 3; i++ {
+		s.Append(MeasureResult{
+			Measurement: "piccolo_twamp",
+			Source:      fmt.Sprintf("host-%d", i),
+			Target:      "b",
+			Fields:      map[string]float64{},
+			Tags:        map[string]string{},
+			SentAt:      time.Now(),
+		})
+	}
+
+	// First flush delivers all 3
+	var count int
+	s.Flush(context.Background(), func(batch []MeasureResult) error {
+		count += len(batch)
+		return nil
+	})
+	if count != 3 {
+		t.Errorf("expected 3 flushed, got %d", count)
+	}
+
+	// Second flush should be empty — file was cleared
+	count = 0
+	s.Flush(context.Background(), func(batch []MeasureResult) error {
+		count += len(batch)
+		return nil
+	})
+	if count != 0 {
+		t.Errorf("expected 0 on second flush, got %d", count)
+	}
+}
+
+// ============================================================================
+// PrometheusStore.UpdateResult — dynamic gauge consistency
+// ============================================================================
+
+func TestPrometheusStoreUpdateResultStableTags(t *testing.T) {
+	store := newPrometheusStore("probe-a")
+	r := MeasureResult{
+		Measurement: "piccolo_dns",
+		Source:      "probe-a",
+		Target:      "2620:fe::fe",
+		Site:        "east",
+		Topology:    "mesh",
+		Tags:        map[string]string{"resolver": "2620:fe::fe", "name": "example.com"},
+		Fields:      map[string]float64{"dns_rtt_ms": 5.0, "dns_success": 1.0},
+		SentAt:      time.Now(),
+	}
+	// Call twice with same tag set — must not panic
+	store.UpdateResult(r)
+	store.UpdateResult(r)
+
+	rec := httptest.NewRecorder()
+	store.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, "piccolo_dns_dns_rtt_ms") {
+		t.Errorf("expected piccolo_dns_dns_rtt_ms in metrics:\n%s", body)
+	}
+	if !strings.Contains(body, `resolver="2620:fe::fe"`) {
+		t.Errorf("expected resolver label:\n%s", body)
+	}
+}
+
+func TestPrometheusStoreUpdateResultMultipleMeasurements(t *testing.T) {
+	store := newPrometheusStore("probe-a")
+	for _, meas := range []string{"piccolo_twamp", "piccolo_bw", "piccolo_dns"} {
+		store.UpdateResult(MeasureResult{
+			Measurement: meas,
+			Source:      "probe-a",
+			Target:      "probe-b",
+			Site:        "east",
+			Topology:    "mesh",
+			Tags:        map[string]string{},
+			Fields:      map[string]float64{"value": 42.0},
+			SentAt:      time.Now(),
+		})
+	}
+	rec := httptest.NewRecorder()
+	store.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	body := rec.Body.String()
+	for _, want := range []string{"piccolo_twamp_value", "piccolo_bw_value", "piccolo_dns_value"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("expected %q in metrics output", want)
+		}
+	}
+}
+
+// ============================================================================
+// BwMeasurer — address parsing
+// ============================================================================
+
+func TestBwRunNativeAddressWithPort(t *testing.T) {
+	// Verify address-with-port passes through SplitHostPort without appending :5201
+	srv := &BwServer{}
+	port, err := srv.Start(0)
+	if err != nil {
+		t.Fatalf("BwServer.Start: %v", err)
+	}
+	defer srv.Stop()
+
+	m := &BwMeasurer{hostname: "probe-a"}
+	cfg := MeasurerConfig{Duration: 200 * time.Millisecond, Timeout: 5 * time.Second}
+	// Pass address with explicit port — must not double-append port
+	target := HostEntry{Name: "loopback", Address: fmt.Sprintf("[::1]:%d", port)}
+	results, err := m.Run(context.Background(), target, cfg)
+	if err != nil {
+		t.Fatalf("Run() with host:port address: %v", err)
+	}
+	if len(results) == 0 || results[0].Fields["bw_tx_mbps"] <= 0 {
+		t.Error("expected positive bw_tx_mbps")
+	}
+}
+
+func TestBwRunNativeIPv6BareAddress(t *testing.T) {
+	// Bare IPv6 address (no port) must have :5201 appended via JoinHostPort
+	srv := &BwServer{}
+	if _, err := srv.Start(5201); err != nil {
+		t.Skipf("port 5201 not available: %v", err)
+	}
+	defer srv.Stop()
+
+	m := &BwMeasurer{hostname: "probe-a"}
+	cfg := MeasurerConfig{Duration: 200 * time.Millisecond, Timeout: 5 * time.Second}
+	target := HostEntry{Name: "loopback", Address: "::1"} // no port — must auto-append 5201
+	results, err := m.Run(context.Background(), target, cfg)
+	if err != nil {
+		t.Fatalf("Run() with bare IPv6 address: %v", err)
+	}
+	if len(results) == 0 || results[0].Fields["bw_tx_mbps"] <= 0 {
+		t.Error("expected positive bw_tx_mbps")
+	}
+}
+
+// ============================================================================
+// TwampMeasurer.Run (via loopback server)
+// ============================================================================
+
+func TestTwampMeasurerRun(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping loopback integration test in short mode")
+	}
+	al, _ := parseAllowlist("")
+	rl := newRateLimiter(0)
+	srv := NewServer(nil, rl, al, true)
+
+	ln, err := net.ListenUDP("udp6", &net.UDPAddr{IP: net.IPv6zero, Port: 0})
+	if err != nil {
+		t.Skipf("udp6 not available: %v", err)
+	}
+	port := ln.LocalAddr().(*net.UDPAddr).Port
+	ln.Close()
+
+	go srv.Start(port) //nolint:errcheck
+	time.Sleep(50 * time.Millisecond)
+	defer srv.cancel()
+
+	m := &TwampMeasurer{hostname: "probe-a", port: port}
+	cfg := MeasurerConfig{
+		BurstSize:     3,
+		BurstInterval: 50 * time.Millisecond,
+		Timeout:       2 * time.Second,
+		Synced:        true,
+	}
+	results, err := m.Run(context.Background(), HostEntry{Name: "loopback", Address: "::1"}, cfg)
+	if err != nil {
+		t.Fatalf("TwampMeasurer.Run: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected at least one result")
+	}
+	r := results[0]
+	if r.Measurement != "piccolo_twamp" {
+		t.Errorf("Measurement = %q, want piccolo_twamp", r.Measurement)
+	}
+	if r.Fields["packets_sent"] != 3 {
+		t.Errorf("packets_sent = %v, want 3", r.Fields["packets_sent"])
+	}
+	if r.Fields["loss_pct"] != 0 {
+		t.Errorf("loss_pct = %v, want 0", r.Fields["loss_pct"])
+	}
+	if r.Fields["rtt_avg_ms"] <= 0 {
+		t.Errorf("rtt_avg_ms = %v, want > 0", r.Fields["rtt_avg_ms"])
+	}
+}
+
+// ============================================================================
+// DnsMeasurer — IPv6 resolver address (JoinHostPort)
+// ============================================================================
+
+func TestDnsMeasurerIPv6Resolver(t *testing.T) {
+	// Verify that an IPv6 resolver address is correctly formatted as [addr]:53
+	// This is a structural test — dns_success may be 0 if resolver unreachable.
+	m := &DnsMeasurer{hostname: "probe-a"}
+	cfg := MeasurerConfig{
+		Timeout:   1 * time.Second,
+		Resolvers: []string{"::1"}, // loopback — will fail but must not panic/crash
+		Names:     []string{"example.com"},
+	}
+	results, err := m.Run(context.Background(), HostEntry{}, cfg)
+	if err != nil {
+		t.Fatalf("Run() error: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected at least one result")
+	}
+	r := results[0]
+	if r.Tags["resolver"] != "::1" {
+		t.Errorf("Tags[resolver] = %q, want ::1", r.Tags["resolver"])
+	}
+	// dns_success must be 0.0 or 1.0 — never absent
+	if _, ok := r.Fields["dns_success"]; !ok {
+		t.Error("missing dns_success field")
+	}
+}

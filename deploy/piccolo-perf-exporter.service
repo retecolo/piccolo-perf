@@ -1,0 +1,19 @@
+[Unit]
+Description=piccolo-perf Prometheus Exporter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/piccolo-perf twamp \
+  -mode exporter \
+  -config-url http://config-server/piccolo-config.json \
+  -probe-mode background \
+  -metrics-addr :9862
+Restart=on-failure
+RestartSec=10s
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_RAW
+NoNewPrivileges=true
+DynamicUser=yes
+
+[Install]
+WantedBy=multi-user.target

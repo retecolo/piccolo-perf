@@ -1,24 +1,43 @@
 {
   "topology": "mesh",
-  "probe_interval": "60s",
-  "burst_size": 5,
-  "burst_interval": "200ms",
-  "packet_timeout": "5s",
-  "padding": 0,
   "config_refresh": "5m",
-  "influxdb": {
-    "url": "http://influxdb.example.com:8086",
-    "token": "replace-with-your-influxdb-token",
-    "org": "myorg",
-    "bucket": "twamp"
-  },
+  "hide_skipped": false,
   "hosts": [
     { "name": "probe-a", "address": "10.0.0.1", "site": "us-east" },
-    { "name": "probe-b", "address": "10.0.0.2", "site": "us-west" },
-    { "name": "probe-c", "address": "10.0.0.3", "site": "eu-west" }
+    { "name": "probe-b", "address": "10.0.0.2", "site": "us-west" }
   ],
-  "hub_spoke": {
+  "hub_spoke": { "enabled": false, "hub": "probe-a" },
+  "measurements": [
+    {
+      "type": "twamp", "interval": "60s", "targets": "all",
+      "burst_size": 5, "burst_interval": "200ms", "packet_timeout": "5s", "padding": 0
+    },
+    {
+      "type": "bw", "interval": "300s", "targets": "all",
+      "duration": "5s", "prefer_iperf3": true
+    },
+    {
+      "type": "trace", "interval": "600s", "targets": "all",
+      "max_hops": 30, "probes_per_hop": 1, "timeout": "2s"
+    },
+    {
+      "type": "mtu", "interval": "600s", "targets": "all", "ceiling": 1500
+    },
+    {
+      "type": "dns", "interval": "120s",
+      "resolvers": ["8.8.8.8", "1.1.1.1"],
+      "names": ["example.com", "google.com"]
+    }
+  ],
+  "influxdb": {
+    "url": "http://influxdb.example.com:8086",
+    "token": "your-token",
+    "org": "myorg",
+    "bucket": "piccolo"
+  },
+  "local_store": {
     "enabled": false,
-    "hub": "probe-a"
+    "path": "/var/lib/piccolo-perf/results.jsonl",
+    "max_lines": 10000
   }
 }

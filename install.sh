@@ -65,11 +65,16 @@ detect_arch() {
 # ── Fetch latest release version from GitHub ──────────────────────────────────
 
 latest_version() {
-    RESPONSE="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest")"
-    # Check for rate limit or error response before parsing
-    if echo "$RESPONSE" | grep -q '"message"'; then
+    API_URL="https://api.github.com/repos/${REPO}/releases/latest"
+    # Use -sL without -f so we can capture the response body on HTTP errors
+    HTTP_CODE="$(curl -sLo /tmp/_piccolo_release.json -w "%{http_code}" "$API_URL")"
+    RESPONSE="$(cat /tmp/_piccolo_release.json)"
+    rm -f /tmp/_piccolo_release.json
+
+    if [ "$HTTP_CODE" != "200" ]; then
         MSG="$(echo "$RESPONSE" | grep '"message"' | sed 's/.*"message": *"\([^"]*\)".*/\1/')"
-        die "GitHub API error: ${MSG}. Try again in a moment or set GITHUB_TOKEN."
+        [ -z "$MSG" ] && MSG="HTTP $HTTP_CODE"
+        die "GitHub API returned an error for ${API_URL}: ${MSG}"
     fi
     echo "$RESPONSE" | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/'
 }

@@ -935,6 +935,38 @@ func TestLocalStoreCapEnforced(t *testing.T) {
 }
 
 // ============================================================================
+// Multi-measurer config parsing
+// ============================================================================
+
+func TestParseAgentConfigMeasurements(t *testing.T) {
+	raw := []byte(`{
+        "topology": "mesh",
+        "hosts": [{"name":"a","address":"10.0.0.1","site":"east"}],
+        "hub_spoke": {"enabled": false, "hub": ""},
+        "measurements": [
+            {"type": "twamp", "interval": "30s", "targets": "all", "burst_size": 3},
+            {"type": "dns",   "interval": "60s", "resolvers": ["8.8.8.8"], "names": ["example.com"]}
+        ]
+    }`)
+	cfg, err := parseAgentConfig(raw)
+	if err != nil {
+		t.Fatalf("parseAgentConfig: %v", err)
+	}
+	if len(cfg.Measurements) != 2 {
+		t.Fatalf("expected 2 measurements, got %d", len(cfg.Measurements))
+	}
+	if cfg.Measurements[0].Type != "twamp" {
+		t.Errorf("Measurements[0].Type = %q, want twamp", cfg.Measurements[0].Type)
+	}
+	if cfg.Measurements[1].Type != "dns" {
+		t.Errorf("Measurements[1].Type = %q, want dns", cfg.Measurements[1].Type)
+	}
+	if cfg.Measurements[0].MeasurerConfig.BurstSize != 3 {
+		t.Errorf("BurstSize = %d, want 3", cfg.Measurements[0].MeasurerConfig.BurstSize)
+	}
+}
+
+// ============================================================================
 // DnsMeasurer
 // ============================================================================
 

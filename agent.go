@@ -25,6 +25,24 @@ type AgentConfig struct {
 	InfluxDB      InfluxConfig
 	Hosts         []HostEntry
 	HubSpoke      HubSpokeConfig
+	Measurements  []MeasurementSpec
+	HideSkipped   bool
+	LocalStore    LocalStoreConfig
+}
+
+// MeasurementSpec describes one scheduled measurement type.
+type MeasurementSpec struct {
+	Type           string        // "twamp", "bw", "trace", "mtu", "dns"
+	Interval       time.Duration
+	Targets        string        // "all" or "hub-only"
+	MeasurerConfig MeasurerConfig
+}
+
+// LocalStoreConfig controls the optional local JSONL result store.
+type LocalStoreConfig struct {
+	Enabled  bool
+	Path     string
+	MaxLines int
 }
 
 type HostEntry struct {
@@ -64,16 +82,43 @@ type ProbeResult struct {
 
 // rawAgentConfig mirrors AgentConfig with string durations for JSON decoding.
 type rawAgentConfig struct {
-	Topology      string          `json:"topology"`
-	ProbeInterval string          `json:"probe_interval"`
-	BurstSize     int             `json:"burst_size"`
-	BurstInterval string          `json:"burst_interval"`
-	PacketTimeout string          `json:"packet_timeout"`
-	Padding       int             `json:"padding"`
-	ConfigRefresh string          `json:"config_refresh"`
-	InfluxDB      rawInfluxConfig `json:"influxdb"`
-	Hosts         []rawHostEntry  `json:"hosts"`
-	HubSpoke      rawHubSpoke     `json:"hub_spoke"`
+	Topology      string               `json:"topology"`
+	ProbeInterval string               `json:"probe_interval"`
+	BurstSize     int                  `json:"burst_size"`
+	BurstInterval string               `json:"burst_interval"`
+	PacketTimeout string               `json:"packet_timeout"`
+	Padding       int                  `json:"padding"`
+	ConfigRefresh string               `json:"config_refresh"`
+	InfluxDB      rawInfluxConfig      `json:"influxdb"`
+	Hosts         []rawHostEntry       `json:"hosts"`
+	HubSpoke      rawHubSpoke          `json:"hub_spoke"`
+	Measurements  []rawMeasurementSpec `json:"measurements"`
+	HideSkipped   bool                 `json:"hide_skipped"`
+	LocalStore    rawLocalStoreConfig  `json:"local_store"`
+}
+
+type rawMeasurementSpec struct {
+	Type          string   `json:"type"`
+	Interval      string   `json:"interval"`
+	Targets       string   `json:"targets"`
+	BurstSize     int      `json:"burst_size"`
+	BurstInterval string   `json:"burst_interval"`
+	PacketTimeout string   `json:"packet_timeout"`
+	Padding       int      `json:"padding"`
+	Duration      string   `json:"duration"`
+	PreferIperf3  bool     `json:"prefer_iperf3"`
+	MaxHops       int      `json:"max_hops"`
+	ProbesPerHop  int      `json:"probes_per_hop"`
+	Ceiling       int      `json:"ceiling"`
+	Resolvers     []string `json:"resolvers"`
+	Names         []string `json:"names"`
+	Timeout       string   `json:"timeout"`
+}
+
+type rawLocalStoreConfig struct {
+	Enabled  bool   `json:"enabled"`
+	Path     string `json:"path"`
+	MaxLines int    `json:"max_lines"`
 }
 
 type rawInfluxConfig struct {
@@ -145,6 +190,75 @@ func parseAgentConfig(data []byte) (AgentConfig, error) {
 		hosts[i] = HostEntry{Name: h.Name, Address: h.Address, Site: h.Site}
 	}
 
+	var specs []MeasurementSpec
+	for _, rm := range raw.Measurements {
+		interval, err := parseDur(rm.Interval, "measurements[].interval", "60s")
+		if err != nil {
+			return AgentConfig{}, err
+		}
+		burstIntervalSpec, err := parseDur(rm.BurstInterval, "burst_interval", "200ms")
+		if err != nil {
+			return AgentConfig{}, err
+		}
+		pktTimeout, err := parseDur(rm.PacketTimeout, "packet_timeout", "5s")
+		if err != nil {
+			return AgentConfig{}, err
+		}
+		dur, err := parseDur(rm.Duration, "duration", "5s")
+		if err != nil {
+			return AgentConfig{}, err
+		}
+		mTimeout, err := parseDur(rm.Timeout, "timeout", "2s")
+		if err != nil {
+			return AgentConfig{}, err
+		}
+		rmBurstSize := rm.BurstSize
+		if rmBurstSize <= 0 {
+			rmBurstSize = 5
+		}
+		maxHops := rm.MaxHops
+		if maxHops <= 0 {
+			maxHops = 30
+		}
+		probes := rm.ProbesPerHop
+		if probes <= 0 {
+			probes = 1
+		}
+		ceiling := rm.Ceiling
+		if ceiling <= 0 {
+			ceiling = 1500
+		}
+		specs = append(specs, MeasurementSpec{
+			Type:     rm.Type,
+			Interval: interval,
+			Targets:  rm.Targets,
+			MeasurerConfig: MeasurerConfig{
+				BurstSize:     rmBurstSize,
+				BurstInterval: burstIntervalSpec,
+				Timeout:       mTimeout,
+				Padding:       rm.Padding,
+				Duration:      dur,
+				PreferIperf3:  rm.PreferIperf3,
+				MaxHops:       maxHops,
+				ProbesPerHop:  probes,
+				Ceiling:       ceiling,
+				Resolvers:     rm.Resolvers,
+				Names:         rm.Names,
+			},
+		})
+		_ = pktTimeout // PacketTimeout goes into BurstInterval for TWAMP
+	}
+	// If no measurements block, default to TWAMP for backward compat
+	if len(specs) == 0 {
+		specs = []MeasurementSpec{{
+			Type: "twamp", Interval: probeInterval, Targets: "all",
+			MeasurerConfig: MeasurerConfig{
+				BurstSize: burstSize, BurstInterval: burstInterval,
+				Timeout: packetTimeout, Padding: raw.Padding,
+			},
+		}}
+	}
+
 	return AgentConfig{
 		Topology:      raw.Topology,
 		ProbeInterval: probeInterval,
@@ -163,6 +277,13 @@ func parseAgentConfig(data []byte) (AgentConfig, error) {
 		HubSpoke: HubSpokeConfig{
 			Enabled: raw.HubSpoke.Enabled,
 			Hub:     raw.HubSpoke.Hub,
+		},
+		Measurements: specs,
+		HideSkipped:  raw.HideSkipped,
+		LocalStore: LocalStoreConfig{
+			Enabled:  raw.LocalStore.Enabled,
+			Path:     raw.LocalStore.Path,
+			MaxLines: raw.LocalStore.MaxLines,
 		},
 	}, nil
 }
@@ -367,7 +488,7 @@ func runAgent(port int, configURL, hostname string, configRefresh time.Duration,
 
 	// Wire channels
 	configCh := make(chan AgentConfig, 1)
-	resultsCh := make(chan ProbeResult, 200)
+	resultsCh := make(chan MeasureResult, 200)
 
 	// Seed the config channel with initial config so scheduler starts immediately
 	configCh <- initialCfg
@@ -393,24 +514,107 @@ func runAgent(port int, configURL, hostname string, configRefresh time.Duration,
 		}
 	}()
 
-	// Goroutine 3: Probe scheduler
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		runProbeScheduler(ctx, configCh, resultsCh, hostname, port, synced, logFile, logger)
-	}()
+	// Goroutine 3: Per-measurer schedulers (one goroutine per MeasurementSpec)
+	measurers := buildMeasurers(hostname, port, synced, logFile)
+	for _, spec := range initialCfg.Measurements {
+		spec := spec // capture
+		m, ok := measurers[spec.Type]
+		if !ok {
+			logger.Printf("[Agent] unknown measurement type %q — skipping", spec.Type)
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			runMeasurerScheduler(ctx, m, spec, configCh, resultsCh, hostname, logger, initialCfg.HideSkipped)
+		}()
+	}
 
 	// Goroutine 4: InfluxDB writer
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		w := newInfluxWriter(initialCfg.InfluxDB, logger)
-		w.run(ctx, resultsCh)
+		w.runResults(ctx, resultsCh)
 	}()
 
 	// Wait for shutdown signal then cancel context
 	platformWaitForShutdown(cancel, logger)
 	wg.Wait()
+}
+
+// buildMeasurers constructs the full registry of supported measurer types.
+func buildMeasurers(hostname string, port int, synced bool, logFile *os.File) map[string]Measurer {
+	return map[string]Measurer{
+		"twamp": &TwampMeasurer{hostname: hostname, port: port, logFile: logFile, synced: synced},
+		"bw":    &BwMeasurer{hostname: hostname},
+		"trace": &TraceMeasurer{hostname: hostname},
+		"mtu":   &MtuMeasurer{hostname: hostname},
+		"dns":   &DnsMeasurer{hostname: hostname},
+	}
+}
+
+// runMeasurerScheduler drives a single Measurer on its own ticker.
+// It listens for updated AgentConfigs on configs and forwards MeasureResults to results.
+func runMeasurerScheduler(ctx context.Context, m Measurer, spec MeasurementSpec, configs <-chan AgentConfig, results chan<- MeasureResult, hostname string, logger *log.Logger, hideSkipped bool) {
+	ticker := time.NewTicker(spec.Interval)
+	defer ticker.Stop()
+	var cfg AgentConfig
+
+	for {
+		select {
+		case newCfg := <-configs:
+			cfg = newCfg
+		case <-ticker.C:
+			targets := resolveTargets(cfg, hostname, spec.Targets, m.Name())
+			mcfg := spec.MeasurerConfig
+			mcfg.Synced = true // always use agent's synced flag
+			for _, target := range targets {
+				rs, err := m.Run(ctx, target, mcfg)
+				if err != nil {
+					logger.Printf("[Agent] %s→%s error: %v", m.Name(), target.Name, err)
+					continue
+				}
+				for _, r := range rs {
+					if hideSkipped && r.Tags["skipped"] == "true" {
+						continue
+					}
+					select {
+					case results <- r:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// resolveTargets returns the list of HostEntry values the measurer should probe.
+func resolveTargets(cfg AgentConfig, hostname, targetsField, measType string) []HostEntry {
+	if measType == "dns" {
+		// DNS uses resolvers/names from MeasurerConfig, not hosts
+		return []HostEntry{{Name: "dns", Address: ""}}
+	}
+	switch targetsField {
+	case "hub-only":
+		for _, h := range cfg.Hosts {
+			if h.Name == cfg.HubSpoke.Hub {
+				return []HostEntry{h}
+			}
+		}
+		return nil
+	default: // "all" or empty
+		var out []HostEntry
+		for _, h := range cfg.Hosts {
+			if h.Name != hostname {
+				out = append(out, h)
+			}
+		}
+		return out
+	}
 }
 
 // runProbeScheduler drives periodic probe bursts to all configured targets.

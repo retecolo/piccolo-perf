@@ -12,6 +12,7 @@ type TwampMeasurer struct {
 	hostname string
 	port     int
 	logFile  *os.File
+	synced   bool
 }
 
 func (m *TwampMeasurer) Name() string { return "twamp" }

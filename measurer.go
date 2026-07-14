@@ -2,19 +2,22 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"time"
 )
 
-// preferIPv6 returns the first IPv6 address from ips, falling back to the
-// first IPv4 address if no IPv6 address is present.
-func preferIPv6(ips []net.IP) net.IP {
-	for _, ip := range ips {
-		if ip.To4() == nil {
-			return ip
-		}
+// resolveHost resolves a hostname to an IP address using the OS address
+// selection order defined by RFC 6724. On systems with both A and AAAA records,
+// the OS will prefer IPv6 per policy table precedence.
+// Falls back to net.LookupIP if the preferred-family probe fails.
+func resolveHost(host string) (net.IP, error) {
+	// LookupIPAddr returns addresses in RFC 6724 order as determined by the OS.
+	addrs, err := net.DefaultResolver.LookupIPAddr(context.Background(), host)
+	if err != nil || len(addrs) == 0 {
+		return nil, fmt.Errorf("resolve %s: %w", host, err)
 	}
-	return ips[0]
+	return addrs[0].IP, nil
 }
 
 // Measurer is implemented by every measurement type the agent can schedule.

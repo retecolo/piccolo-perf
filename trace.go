@@ -60,11 +60,11 @@ func (m *TraceMeasurer) Run(ctx context.Context, target HostEntry, cfg MeasurerC
 func (m *TraceMeasurer) trace(ctx context.Context, addr string, maxHops, probes int, timeout time.Duration) (map[string]float64, int, error) {
 	ip := net.ParseIP(addr)
 	if ip == nil {
-		ips, err := net.LookupIP(addr)
-		if err != nil || len(ips) == 0 {
-			return nil, 0, fmt.Errorf("resolve: %w", err)
+		var err error
+		ip, err = resolveHost(addr)
+		if err != nil {
+			return nil, 0, err
 		}
-		ip = preferIPv6(ips)
 	}
 
 	if ip.To4() != nil {

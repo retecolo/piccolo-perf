@@ -58,11 +58,11 @@ func (m *MtuMeasurer) Run(ctx context.Context, target HostEntry, cfg MeasurerCon
 func (m *MtuMeasurer) discover(ctx context.Context, addr string, ceiling int, timeout time.Duration) (int, error) {
 	ip := net.ParseIP(addr)
 	if ip == nil {
-		ips, err := net.LookupIP(addr)
-		if err != nil || len(ips) == 0 {
-			return 0, fmt.Errorf("resolve %s: %w", addr, err)
+		var err error
+		ip, err = resolveHost(addr)
+		if err != nil {
+			return 0, err
 		}
-		ip = preferIPv6(ips)
 	}
 
 	if ip.To4() != nil {

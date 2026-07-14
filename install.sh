@@ -65,9 +65,13 @@ detect_arch() {
 # ── Fetch latest release version from GitHub ──────────────────────────────────
 
 latest_version() {
-    curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
-        | grep '"tag_name"' \
-        | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/'
+    RESPONSE="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest")"
+    # Check for rate limit or error response before parsing
+    if echo "$RESPONSE" | grep -q '"message"'; then
+        MSG="$(echo "$RESPONSE" | grep '"message"' | sed 's/.*"message": *"\([^"]*\)".*/\1/')"
+        die "GitHub API error: ${MSG}. Try again in a moment or set GITHUB_TOKEN."
+    fi
+    echo "$RESPONSE" | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/'
 }
 
 # ── Main ───────────────────────────────────────────────────────────────────────

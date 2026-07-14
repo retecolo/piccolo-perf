@@ -839,6 +839,33 @@ func TestMtuMeasurerSkippedWithoutCap(t *testing.T) {
 }
 
 // ============================================================================
+// TraceMeasurer
+// ============================================================================
+
+func TestTraceMeasurerName(t *testing.T) {
+	m := &TraceMeasurer{hostname: "probe-a"}
+	if m.Name() != "trace" {
+		t.Errorf("Name() = %q, want trace", m.Name())
+	}
+}
+
+func TestTraceMeasurerSkippedWithoutCap(t *testing.T) {
+	m := &TraceMeasurer{hostname: "probe-a"}
+	cfg := MeasurerConfig{MaxHops: 5, ProbesPerHop: 1, Timeout: time.Second}
+	target := HostEntry{Name: "loopback", Address: "127.0.0.1"}
+	results, err := m.Run(context.Background(), target, cfg)
+	if err != nil {
+		t.Fatalf("Run() error (should degrade): %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected at least one result")
+	}
+	if results[0].Measurement != "piccolo_trace" {
+		t.Errorf("Measurement = %q, want piccolo_trace", results[0].Measurement)
+	}
+}
+
+// ============================================================================
 // DnsMeasurer
 // ============================================================================
 

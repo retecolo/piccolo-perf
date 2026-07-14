@@ -65,16 +65,24 @@ detect_arch() {
 # ── Fetch latest release version from GitHub ──────────────────────────────────
 
 latest_version() {
+    # Resolve the redirect from /releases/latest to /releases/tag/vX.Y.Z
+    # This avoids the GitHub API entirely (no rate limit, no auth required).
+    LOCATION="$(curl -fsSI "https://github.com/${REPO}/releases/latest" \
+        | grep -i '^location:' \
+        | sed 's/.*\/tag\///' \
+        | tr -d '\r')"
+    [ -n "$LOCATION" ] && { echo "$LOCATION"; return; }
+
+    # Fallback: GitHub API (requires auth token if rate-limited)
     API_URL="https://api.github.com/repos/${REPO}/releases/latest"
-    # Use -sL without -f so we can capture the response body on HTTP errors
-    HTTP_CODE="$(curl -sLo /tmp/_piccolo_release.json -w "%{http_code}" "$API_URL")"
+    HTTP_CODE="$(curl -sLo /tmp/_piccolo_release.json -w "%{http_code}" \
+        ${GITHUB_TOKEN:+-H "Authorization: Bearer ${GITHUB_TOKEN}"} "$API_URL")"
     RESPONSE="$(cat /tmp/_piccolo_release.json)"
     rm -f /tmp/_piccolo_release.json
-
     if [ "$HTTP_CODE" != "200" ]; then
         MSG="$(echo "$RESPONSE" | grep '"message"' | sed 's/.*"message": *"\([^"]*\)".*/\1/')"
         [ -z "$MSG" ] && MSG="HTTP $HTTP_CODE"
-        die "GitHub API returned an error for ${API_URL}: ${MSG}"
+        die "GitHub API error: ${MSG}"
     fi
     echo "$RESPONSE" | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/'
 }

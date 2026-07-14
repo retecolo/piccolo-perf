@@ -112,6 +112,7 @@ piccolo-perf twamp -mode exporter \
 | `-timeout` | `5s` | Per-packet receive timeout |
 | `-padding` | `0` | Extra zero-padding bytes per packet |
 | `-no-sync` | `false` | Assert clock is NOT NTP-synchronized (clears S-bit) |
+| `-source` | `""` | Local address to bind the client socket (pins source address, see IPv6 note below) |
 | `-rate-limit` | `0` | Max packets/sec per source IP on server (0 = unlimited) |
 | `-allowed` | `""` | Comma-separated CIDR allowlist for server (empty = all) |
 | `-daemon` | `false` | Run server as background daemon |
@@ -439,15 +440,37 @@ sudo systemctl enable --now piccolo-perf-exporter
 
 ## IPv6
 
-All measurement types support both IPv4 and IPv6:
+All measurement types support both IPv4 and IPv6. The test suite runs in IPv6-only environments.
 
-- TWAMP — dual-stack `udp4` + `udp6` sockets; `net.JoinHostPort` throughout
-- Bandwidth — `tcp6` listener with IPv4 fallback; `net.SplitHostPort` for address parsing
-- Traceroute — IPv4 via `ip4:icmp` + TTL; IPv6 via `ip6:ipv6-icmp` + HopLimit
-- MTU — IPv4 via ICMPv4 + DF bit; IPv6 via ICMPv6 Packet Too Big (DF implicit)
-- DNS — `net.JoinHostPort(resolver, "53")` works for both `9.9.9.9` and `2620:fe::fe`
+| Measurer | IPv4 | IPv6 |
+|---|---|---|
+| TWAMP | `udp4` socket | `udp6` socket |
+| Bandwidth | `tcp` listener | `tcp6` listener (IPv4 fallback) |
+| Traceroute | `ip4:icmp` + TTL | `ip6:ipv6-icmp` + HopLimit |
+| MTU | ICMPv4 + DF bit | ICMPv6 Packet Too Big (DF implicit in IPv6) |
+| DNS | Works | Works — use `[addr]:53` format handled automatically |
+
+When a hostname resolves to both A and AAAA records, address selection follows the OS policy table per RFC 6724 (IPv6 is typically preferred on dual-stack hosts).
 
 The default DNS resolver is `2620:fe::fe` (Quad9 IPv6), reachable in IPv6-only environments.
+
+### RFC 4941 Temporary Addresses
+
+Hosts with IPv6 privacy extensions (RFC 4941) enabled have multiple addresses per interface — a stable address and one or more temporary addresses. The OS may choose a temporary address as the source for outbound packets, causing TWAMP replies to arrive from a different address than the one the client dialed.
+
+piccolo-perf handles this correctly: the TWAMP client uses an unconnected socket and demultiplexes responses by sequence number rather than source address, so replies from any of the server's addresses are accepted.
+
+To explicitly pin the source address and ensure consistent measurements (recommended for agent deployments):
+
+```sh
+# Pin to a stable ULA address
+piccolo-perf twamp -mode client \
+  -server fd68:1e02:dc1a:4::5 \
+  -source fd68:1e02:dc1a:5:dea6:32ff:fe15:f1ef \
+  -port 8620
+```
+
+The `-source` flag is also supported in the `twamp` subcommand. For agent mode, configure stable addresses in `hosts[].address` in the config file.
 
 ## Capabilities
 
@@ -481,7 +504,15 @@ go test ./...
 go build -o piccolo-perf .
 ```
 
-Tests cover NTP conversion, packet marshal/unmarshal, RTT calculation, rate limiter, allowlist parsing, all five measurer types, the local store, and config parsing. The test suite runs in IPv6-only environments (loopback tests use `::1`).
+72 tests covering NTP conversion, packet marshal/unmarshal, RTT calculation, rate limiter, allowlist parsing, all five measurer types, loopback TWAMP integration, `-source` flag binding, BwServer lifecycle, IPv6 address parsing, LocalStore error handling, Prometheus dynamic gauges, DNS IPv6 resolver formatting, and config parsing. The test suite runs in IPv6-only environments (loopback tests use `::1`).
+
+Run a specific subset:
+
+```sh
+go test ./... -run TestTwamp   # TWAMP tests only
+go test ./... -run TestBw      # bandwidth tests
+go test ./... -short           # skip loopback integration tests
+```
 
 ## Backward Compatibility
 

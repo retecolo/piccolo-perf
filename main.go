@@ -504,10 +504,14 @@ func NewClient(serverAddr string, logFile *os.File, count int, interval, timeout
 }
 
 func (c *Client) Run() error {
-	addr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(c.serverAddr, fmt.Sprintf("%d", c.port)))
+	// Resolve using RFC 6724 address selection so AAAA is preferred over A on
+	// dual-stack hosts. net.ResolveUDPAddr("udp", ...) delegates to the OS
+	// getaddrinfo and may return IPv4 first depending on /etc/gai.conf.
+	ip, err := resolveHost(c.serverAddr)
 	if err != nil {
 		return fmt.Errorf("failed to resolve address: %v", err)
 	}
+	addr := &net.UDPAddr{IP: ip, Port: c.port}
 
 	// Use an unconnected socket so replies from any of the server's addresses
 	// (including RFC 4941 temporary addresses) are accepted. TWAMP demultiplexes
@@ -661,11 +665,12 @@ func (c *Client) Run() error {
 // runBurst sends c.count packets and returns the RTT slice and received count.
 // It does not print statistics. Used by agent mode.
 func (c *Client) runBurst() (rtts []time.Duration, recv int) {
-	addr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(c.serverAddr, fmt.Sprintf("%d", c.port)))
+	ip, err := resolveHost(c.serverAddr)
 	if err != nil {
 		c.logger.Printf("resolve failed: %v", err)
 		return nil, 0
 	}
+	addr := &net.UDPAddr{IP: ip, Port: c.port}
 	network := "udp4"
 	bindAddr := &net.UDPAddr{IP: net.IPv4zero}
 	if addr.IP.To4() == nil {

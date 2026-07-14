@@ -1,0 +1,187 @@
+{
+  "__inputs": [
+    {
+      "name": "DS_INFLUXDB",
+      "label": "InfluxDB",
+      "description": "piccolo-perf InfluxDB v2 datasource",
+      "type": "datasource",
+      "pluginId": "influxdb"
+    }
+  ],
+  "__requires": [
+    { "type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0" },
+    { "type": "datasource", "id": "influxdb", "name": "InfluxDB", "version": "1.0.0" },
+    { "type": "panel", "id": "timeseries", "name": "Time series", "version": "" },
+    { "type": "panel", "id": "stat", "name": "Stat", "version": "" },
+    { "type": "panel", "id": "table", "name": "Table", "version": "" }
+  ],
+  "title": "piccolo-perf — DNS",
+  "uid": "piccolo-dns",
+  "description": "DNS resolver latency and success rate per resolver and name",
+  "tags": ["piccolo-perf", "dns", "resolver"],
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "2m",
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "templating": {
+    "list": [
+      {
+        "name": "bucket",
+        "label": "Bucket",
+        "type": "constant",
+        "current": { "value": "piccolo" },
+        "hide": 0
+      },
+      {
+        "name": "resolver",
+        "label": "Resolver",
+        "type": "query",
+        "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+        "query": "import \"influxdata/influxdb/schema\"\nschema.tagValues(bucket: \"${bucket}\", tag: \"resolver\", predicate: (r) => r._measurement == \"piccolo_dns\")",
+        "multi": true,
+        "includeAll": true,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "name",
+        "label": "Name",
+        "type": "query",
+        "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+        "query": "import \"influxdata/influxdb/schema\"\nschema.tagValues(bucket: \"${bucket}\", tag: \"name\", predicate: (r) => r._measurement == \"piccolo_dns\")",
+        "multi": true,
+        "includeAll": true,
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Resolver RTT over time (ms)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 8 },
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+      "targets": [
+        {
+          "query": "from(bucket: \"${bucket}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"piccolo_dns\" and r._field == \"dns_rtt_ms\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({ r with _field: r.source + \" → \" + r[\"resolver\"] + \" (\" + r[\"name\"] + \")\" }))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": { "lineWidth": 1, "fillOpacity": 5 }
+        }
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "min", "max", "p95"] }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Success rate over time (%)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 8, "w": 16, "h": 7 },
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+      "targets": [
+        {
+          "query": "from(bucket: \"${bucket}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"piccolo_dns\" and r._field == \"dns_success\")\n  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)\n  |> map(fn: (r) => ({ r with _value: r._value * 100.0, _field: r.source + \" → \" + r[\"resolver\"] }))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": 0 },
+              { "color": "yellow", "value": 90 },
+              { "color": "green", "value": 99 }
+            ]
+          },
+          "custom": { "fillOpacity": 10, "lineWidth": 1 }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Current success rate",
+      "type": "stat",
+      "gridPos": { "x": 16, "y": 8, "w": 8, "h": 7 },
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+      "targets": [
+        {
+          "query": "from(bucket: \"${bucket}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"piccolo_dns\" and r._field == \"dns_success\")\n  |> mean()\n  |> map(fn: (r) => ({ r with _value: r._value * 100.0, _field: r.source + \" → \" + r[\"resolver\"] }))",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": 0 },
+              { "color": "yellow", "value": 90 },
+              { "color": "green", "value": 99 }
+            ]
+          }
+        }
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background"
+      }
+    },
+    {
+      "id": 4,
+      "title": "RTT percentiles (p50, p95, p99)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 15, "w": 24, "h": 7 },
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+      "targets": [
+        {
+          "query": "from(bucket: \"${bucket}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"piccolo_dns\" and r._field == \"dns_rtt_ms\")\n  |> aggregateWindow(every: v.windowPeriod, fn: (tables=<-, column=\"_value\") => tables |> quantile(q: 0.50), createEmpty: false)\n  |> map(fn: (r) => ({ r with _field: \"p50 \" + r[\"resolver\"] }))",
+          "refId": "p50"
+        },
+        {
+          "query": "from(bucket: \"${bucket}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"piccolo_dns\" and r._field == \"dns_rtt_ms\")\n  |> aggregateWindow(every: v.windowPeriod, fn: (tables=<-, column=\"_value\") => tables |> quantile(q: 0.95), createEmpty: false)\n  |> map(fn: (r) => ({ r with _field: \"p95 \" + r[\"resolver\"] }))",
+          "refId": "p95"
+        },
+        {
+          "query": "from(bucket: \"${bucket}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"piccolo_dns\" and r._field == \"dns_rtt_ms\")\n  |> aggregateWindow(every: v.windowPeriod, fn: (tables=<-, column=\"_value\") => tables |> quantile(q: 0.99), createEmpty: false)\n  |> map(fn: (r) => ({ r with _field: \"p99 \" + r[\"resolver\"] }))",
+          "refId": "p99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "ms" },
+        "overrides": [
+          { "matcher": { "id": "byRegexp", "options": "^p99.*" }, "properties": [{ "id": "custom.lineStyle", "value": { "dash": [6, 3] } }] }
+        ]
+      }
+    },
+    {
+      "id": 5,
+      "title": "Resolver summary table",
+      "type": "table",
+      "gridPos": { "x": 0, "y": 22, "w": 24, "h": 7 },
+      "datasource": { "type": "influxdb", "uid": "${DS_INFLUXDB}" },
+      "targets": [
+        {
+          "query": "from(bucket: \"${bucket}\")\n  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)\n  |> filter(fn: (r) => r._measurement == \"piccolo_dns\" and r._field == \"dns_rtt_ms\")\n  |> group(columns: [\"source\", \"resolver\", \"name\"])\n  |> reduce(fn: (r, accumulator) => ({ count: accumulator.count + 1, sum: accumulator.sum + r._value, min: if r._value < accumulator.min then r._value else accumulator.min, max: if r._value > accumulator.max then r._value else accumulator.max }), identity: { count: 0, sum: 0.0, min: 99999.0, max: 0.0 })\n  |> map(fn: (r) => ({ r with mean: r.sum / float(v: r.count) }))\n  |> keep(columns: [\"source\", \"resolver\", \"name\", \"mean\", \"min\", \"max\", \"count\"])\n  |> rename(columns: { mean: \"Avg RTT (ms)\", min: \"Min RTT (ms)\", max: \"Max RTT (ms)\", count: \"Samples\" })",
+          "refId": "A"
+        }
+      ],
+      "options": { "sortBy": [{ "displayName": "Avg RTT (ms)" }] },
+      "fieldConfig": {
+        "overrides": [
+          { "matcher": { "id": "byRegexp", "options": ".* RTT .*" }, "properties": [{ "id": "unit", "value": "ms" }, { "id": "decimals", "value": 2 }] }
+        ]
+      }
+    }
+  ]
+}

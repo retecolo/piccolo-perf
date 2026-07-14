@@ -66,14 +66,16 @@ func (m *MtuMeasurer) discover(ctx context.Context, addr string, ceiling int, ti
 	defer pc.Close()
 
 	// Set DF bit via platform-specific helper.
-	if sc, ok := pc.(syscall.Conn); ok {
-		rc, rcErr := sc.SyscallConn()
-		if rcErr != nil {
-			return 0, fmt.Errorf("syscall conn: %w", rcErr)
-		}
-		if dfErr := setDFBit(rc); dfErr != nil {
-			return 0, fmt.Errorf("set DF: %w", dfErr)
-		}
+	sc, ok := pc.(syscall.Conn)
+	if !ok {
+		return 0, fmt.Errorf("PacketConn does not implement syscall.Conn")
+	}
+	rc, err := sc.SyscallConn()
+	if err != nil {
+		return 0, fmt.Errorf("syscall conn: %w", err)
+	}
+	if dfErr := setDFBit(rc); dfErr != nil {
+		return 0, fmt.Errorf("set DF: %w", dfErr)
 	}
 
 	lo, hi := 576, ceiling

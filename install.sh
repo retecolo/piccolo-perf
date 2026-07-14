@@ -103,7 +103,7 @@ main() {
         info "Using pinned version: ${VERSION}"
     else
         VERSION="$(latest_version)"
-        [ -n "$VERSION" ] || die "Could not determine latest release version. Set PICCOLO_VERSION=v1.0.1 to install a specific version."
+        [ -n "$VERSION" ] || die "Could not determine latest release version. Set PICCOLO_VERSION=v1.0.2 to install a specific version."
         info "Latest release: ${VERSION}"
     fi
 

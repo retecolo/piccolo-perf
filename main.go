@@ -476,6 +476,7 @@ type pendingSend struct {
 // Client represents a TWAMP-Light session sender.
 type Client struct {
 	serverAddr  string
+	sourceAddr  string // optional: bind to this local address (IPv4 or IPv6 literal)
 	port        int
 	logger      *log.Logger
 	count       int
@@ -508,13 +509,25 @@ func (c *Client) Run() error {
 		return fmt.Errorf("failed to resolve address: %v", err)
 	}
 
+	// Use an unconnected socket so replies from any of the server's addresses
+	// (including RFC 4941 temporary addresses) are accepted. TWAMP demultiplexes
+	// by sequence number, not by source address.
 	network := "udp4"
+	bindAddr := &net.UDPAddr{IP: net.IPv4zero}
 	if addr.IP.To4() == nil {
 		network = "udp6"
+		bindAddr = &net.UDPAddr{IP: net.IPv6zero}
 	}
-	conn, err := net.DialUDP(network, nil, addr)
+	if c.sourceAddr != "" {
+		srcIP := net.ParseIP(c.sourceAddr)
+		if srcIP == nil {
+			return fmt.Errorf("invalid source address: %q", c.sourceAddr)
+		}
+		bindAddr = &net.UDPAddr{IP: srcIP}
+	}
+	conn, err := net.ListenUDP(network, bindAddr)
 	if err != nil {
-		return fmt.Errorf("failed to connect: %v", err)
+		return fmt.Errorf("failed to listen: %v", err)
 	}
 	defer conn.Close()
 
@@ -534,14 +547,16 @@ func (c *Client) Run() error {
 	var pendingMu sync.Mutex
 	results := make(chan result, c.count)
 
-	// Receiver goroutine — handles out-of-order responses.
+	// Receiver goroutine — accepts replies from any of the server's addresses.
+	// RFC 4941 privacy extensions mean the server may reply from a different
+	// address than the one dialed. TWAMP demultiplexes by sequence number.
 	recvDone := make(chan struct{})
 	go func() {
 		defer close(recvDone)
 		buf := make([]byte, 1024+c.paddingSize)
 		for {
 			conn.SetReadDeadline(time.Now().Add(c.timeout))
-			n, err := conn.Read(buf)
+			n, _, err := conn.ReadFromUDP(buf)
 			if err != nil {
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 					// Check if all expected responses have arrived.
@@ -573,7 +588,7 @@ func (c *Client) Run() error {
 
 			var resp TWAMPTestResponse
 			if err := resp.UnmarshalBinary(buf[:n]); err != nil {
-				results <- result{err: fmt.Errorf("invalid response: %v", err)}
+				// Not a valid TWAMP response — ignore (may be stray UDP)
 				continue
 			}
 
@@ -585,7 +600,7 @@ func (c *Client) Run() error {
 			pendingMu.Unlock()
 
 			if !ok {
-				results <- result{err: fmt.Errorf("unexpected seq %d", resp.SequenceNumber)}
+				// Unknown sequence number — ignore
 				continue
 			}
 
@@ -611,7 +626,7 @@ func (c *Client) Run() error {
 		pending[seq] = pendingSend{t1: t1, sentAt: t1}
 		pendingMu.Unlock()
 
-		if _, err := conn.Write(req.MarshalBinary()); err != nil {
+		if _, err := conn.WriteToUDP(req.MarshalBinary(), addr); err != nil {
 			pendingMu.Lock()
 			delete(pending, seq)
 			pendingMu.Unlock()
@@ -652,12 +667,20 @@ func (c *Client) runBurst() (rtts []time.Duration, recv int) {
 		return nil, 0
 	}
 	network := "udp4"
+	bindAddr := &net.UDPAddr{IP: net.IPv4zero}
 	if addr.IP.To4() == nil {
 		network = "udp6"
+		bindAddr = &net.UDPAddr{IP: net.IPv6zero}
 	}
-	conn, err := net.DialUDP(network, nil, addr)
+	if c.sourceAddr != "" {
+		srcIP := net.ParseIP(c.sourceAddr)
+		if srcIP != nil {
+			bindAddr = &net.UDPAddr{IP: srcIP}
+		}
+	}
+	conn, err := net.ListenUDP(network, bindAddr)
 	if err != nil {
-		c.logger.Printf("dial failed: %v", err)
+		c.logger.Printf("listen failed: %v", err)
 		return nil, 0
 	}
 	defer conn.Close()
@@ -678,7 +701,7 @@ func (c *Client) runBurst() (rtts []time.Duration, recv int) {
 		buf := make([]byte, 1024+c.paddingSize)
 		for {
 			conn.SetReadDeadline(time.Now().Add(c.timeout))
-			n, err := conn.Read(buf)
+			n, _, err := conn.ReadFromUDP(buf)
 			if err != nil {
 				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 					pendingMu.Lock()
@@ -728,7 +751,7 @@ func (c *Client) runBurst() (rtts []time.Duration, recv int) {
 		pendingMu.Lock()
 		pending[seq] = pendingSend{t1: t1, sentAt: t1}
 		pendingMu.Unlock()
-		if _, err := conn.Write(req.MarshalBinary()); err != nil {
+		if _, err := conn.WriteToUDP(req.MarshalBinary(), addr); err != nil {
 			pendingMu.Lock()
 			delete(pending, seq)
 			pendingMu.Unlock()
@@ -823,6 +846,7 @@ var (
 	noSync      = flag.Bool("no-sync", false, "Assert clock is NOT NTP-synchronized (sets S=0 in error estimate)")
 	rateLimit   = flag.Int("rate-limit", 0, "Max packets per second per source IP on server (0 = unlimited)")
 	allowed     = flag.String("allowed", "", "Comma-separated CIDR allowlist for server (empty = allow all)")
+	sourceAddr  = flag.String("source", "", "Local source address to bind (overrides OS address selection, useful with RFC 4941 temporary addresses)")
 
 	configURL     = flag.String("config-url", "", "HTTP URL of topology JSON config (required in agent mode)")
 	configRefresh = flag.Duration("config-refresh", 0, "Config re-fetch interval (default: value from config)")
@@ -918,6 +942,7 @@ func runLegacyMode() {
 		}
 	case "client":
 		client := NewClient(*serverAddr, logFile, *count, *interval, *timeout, *port, *paddingSize, synced)
+		client.sourceAddr = *sourceAddr
 		if err := client.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "Client error: %v\n", err)
 			os.Exit(1)
@@ -952,6 +977,7 @@ func runTwampSubcommand() {
 	timeout     := fs.Duration("timeout", 5*time.Second, "per-packet timeout")
 	padding     := fs.Int("padding", 0, "padding bytes")
 	noSync      := fs.Bool("no-sync", false, "assert clock unsynchronized")
+	source      := fs.String("source", "", "local source address to bind (pins address family, prevents RFC 4941 temporary address selection)")
 	rateLimit   := fs.Int("rate-limit", 0, "max pkts/sec per source IP")
 	allowed     := fs.String("allowed", "", "CIDR allowlist")
 	logPath     := fs.String("logfile", "", "log file path")
@@ -991,6 +1017,7 @@ func runTwampSubcommand() {
 		}
 	case "client":
 		c := NewClient(*server, logFile, *count, *interval, *timeout, *port, *padding, synced)
+		c.sourceAddr = *source
 		if err := c.Run(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)

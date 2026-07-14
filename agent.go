@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -514,6 +515,35 @@ func runAgent(port int, configURL, hostname string, configRefresh time.Duration,
 	configCh <- initialCfg
 
 	var wg sync.WaitGroup
+
+	// Flush goroutine: periodically replay buffered results from local store to InfluxDB.
+	if localStore != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			w := newInfluxWriter(initialCfg.InfluxDB, logger)
+			for {
+				select {
+				case <-ticker.C:
+					err := localStore.Flush(ctx, func(batch []MeasureResult) error {
+						lines := make([]string, 0, len(batch))
+						for _, r := range batch {
+							lines = append(lines, lineProtocolResult(r))
+						}
+						body := strings.Join(lines, "\n")
+						return w.write(ctx, body)
+					})
+					if err != nil && err != context.Canceled {
+						logger.Printf("[Agent] local store flush error: %v", err)
+					}
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
 
 	// Goroutine 1: Config poller (sends subsequent configs)
 	wg.Add(1)

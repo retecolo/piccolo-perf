@@ -866,6 +866,75 @@ func TestTraceMeasurerSkippedWithoutCap(t *testing.T) {
 }
 
 // ============================================================================
+// LocalStore
+// ============================================================================
+
+func TestLocalStoreAppendAndFlush(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/results.jsonl"
+	s, err := NewLocalStore(path, 1000)
+	if err != nil {
+		t.Fatalf("NewLocalStore: %v", err)
+	}
+	defer s.Close()
+
+	r := MeasureResult{
+		Measurement: "piccolo_twamp",
+		Source:      "a",
+		Target:      "b",
+		Fields:      map[string]float64{"rtt_avg_ms": 1.0},
+		Tags:        map[string]string{},
+		SentAt:      time.Unix(1_000_000, 0),
+	}
+	if err := s.Append(r); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+
+	var flushed []MeasureResult
+	err = s.Flush(context.Background(), func(batch []MeasureResult) error {
+		flushed = append(flushed, batch...)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	if len(flushed) != 1 {
+		t.Fatalf("expected 1 flushed result, got %d", len(flushed))
+	}
+	if flushed[0].Source != "a" {
+		t.Errorf("flushed result Source = %q, want a", flushed[0].Source)
+	}
+}
+
+func TestLocalStoreCapEnforced(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewLocalStore(dir+"/results.jsonl", 3)
+	if err != nil {
+		t.Fatalf("NewLocalStore: %v", err)
+	}
+	defer s.Close()
+
+	for i := 0; i < 5; i++ {
+		s.Append(MeasureResult{
+			Measurement: "piccolo_twamp",
+			Source:      fmt.Sprintf("host-%d", i),
+			Target:      "b",
+			Fields:      map[string]float64{},
+			Tags:        map[string]string{},
+			SentAt:      time.Now(),
+		})
+	}
+	var flushed []MeasureResult
+	s.Flush(context.Background(), func(b []MeasureResult) error {
+		flushed = append(flushed, b...)
+		return nil
+	})
+	if len(flushed) > 3 {
+		t.Errorf("expected at most 3 results (cap=3), got %d", len(flushed))
+	}
+}
+
+// ============================================================================
 // DnsMeasurer
 // ============================================================================
 

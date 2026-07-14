@@ -8,7 +8,6 @@ import (
 	"net"
 	"os/exec"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -54,7 +53,8 @@ func (m *BwMeasurer) Run(ctx context.Context, target HostEntry, cfg MeasurerConf
 
 func (m *BwMeasurer) runNative(ctx context.Context, target HostEntry, duration time.Duration) ([]MeasureResult, error) {
 	addr := target.Address
-	if !strings.Contains(addr, ":") {
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		// No port present — addr is a bare host (IPv4 or IPv6 literal or hostname).
 		addr = net.JoinHostPort(addr, "5201")
 	}
 
@@ -151,10 +151,16 @@ type BwServer struct {
 }
 
 // Start begins listening on the given port (0 = OS-assigned). Returns the bound port.
+// Prefers tcp6 (dual-stack on most kernels) and falls back to tcp on platforms
+// where IPv6 is unavailable.
 func (s *BwServer) Start(port int) (int, error) {
-	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	addr := fmt.Sprintf("[::]:%d", port)
+	ln, err := net.Listen("tcp6", addr)
 	if err != nil {
-		return 0, err
+		ln, err = net.Listen("tcp", fmt.Sprintf(":%d", port))
+		if err != nil {
+			return 0, err
+		}
 	}
 	s.listener = ln
 	go s.accept()

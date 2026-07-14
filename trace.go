@@ -8,10 +8,12 @@ import (
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
+	"golang.org/x/net/ipv6"
 )
 
-// TraceMeasurer measures per-hop RTT using TTL-increment ICMP probing.
+// TraceMeasurer measures per-hop RTT using TTL/HopLimit-increment ICMP probing.
 // Requires CAP_NET_RAW; degrades gracefully without it.
+// Supports both IPv4 (ICMPv4 Time Exceeded) and IPv6 (ICMPv6 Time Exceeded).
 type TraceMeasurer struct {
 	hostname string
 }
@@ -53,11 +55,25 @@ func (m *TraceMeasurer) Run(ctx context.Context, target HostEntry, cfg MeasurerC
 	}}, nil
 }
 
+// trace resolves addr and dispatches to the appropriate IP-family prober.
 func (m *TraceMeasurer) trace(ctx context.Context, addr string, maxHops, probes int, timeout time.Duration) (map[string]float64, int, error) {
-	dst, err := net.ResolveIPAddr("ip4", addr)
-	if err != nil {
-		return nil, 0, fmt.Errorf("resolve: %w", err)
+	ip := net.ParseIP(addr)
+	if ip == nil {
+		ips, err := net.LookupIP(addr)
+		if err != nil || len(ips) == 0 {
+			return nil, 0, fmt.Errorf("resolve: %w", err)
+		}
+		ip = ips[0]
 	}
+
+	if ip.To4() != nil {
+		return m.traceV4(ctx, ip, maxHops, probes, timeout)
+	}
+	return m.traceV6(ctx, ip, maxHops, probes, timeout)
+}
+
+func (m *TraceMeasurer) traceV4(ctx context.Context, ip net.IP, maxHops, probes int, timeout time.Duration) (map[string]float64, int, error) {
+	dst := &net.IPAddr{IP: ip}
 
 	c, err := icmp.ListenPacket("ip4:icmp", "0.0.0.0")
 	if err != nil {
@@ -93,7 +109,6 @@ func (m *TraceMeasurer) trace(ctx context.Context, addr string, maxHops, probes 
 			start := time.Now()
 			c.SetDeadline(time.Now().Add(timeout))
 			if _, err := c.WriteTo(wb, dst); err != nil {
-				// write failure: this probe contributes nothing; bestRTT stays -1.0
 				continue
 			}
 
@@ -116,6 +131,76 @@ func (m *TraceMeasurer) trace(ctx context.Context, addr string, maxHops, probes 
 		fields[fmt.Sprintf("hop_%d_rtt_ms", ttl)] = bestRTT
 		if bestRTT >= 0 {
 			reached = ttl
+		}
+		if reachedDst {
+			fields["trace_complete"] = 1.0
+			break
+		}
+	}
+
+	if _, ok := fields["trace_complete"]; !ok {
+		fields["trace_complete"] = 0.0
+	}
+
+	return fields, reached, nil
+}
+
+func (m *TraceMeasurer) traceV6(ctx context.Context, ip net.IP, maxHops, probes int, timeout time.Duration) (map[string]float64, int, error) {
+	dst := &net.IPAddr{IP: ip}
+
+	c, err := icmp.ListenPacket("ip6:ipv6-icmp", "::")
+	if err != nil {
+		return nil, 0, fmt.Errorf("raw socket (IPv6): %w", err)
+	}
+	defer c.Close()
+
+	p := c.IPv6PacketConn()
+	fields := make(map[string]float64)
+	reached := 0
+
+	for hopLimit := 1; hopLimit <= maxHops; hopLimit++ {
+		select {
+		case <-ctx.Done():
+			return fields, reached, nil
+		default:
+		}
+
+		msg := icmp.Message{
+			Type: ipv6.ICMPTypeEchoRequest, Code: 0,
+			Body: &icmp.Echo{ID: 1, Seq: hopLimit, Data: []byte("piccolo-perf")},
+		}
+		wb, _ := msg.Marshal(nil)
+
+		bestRTT := -1.0
+		reachedDst := false
+
+		for probe := 0; probe < probes; probe++ {
+			cm := &ipv6.ControlMessage{HopLimit: hopLimit}
+			start := time.Now()
+			c.SetDeadline(time.Now().Add(timeout))
+			if _, err := p.WriteTo(wb, cm, dst); err != nil {
+				continue
+			}
+
+			rb := make([]byte, 1500)
+			c.SetDeadline(time.Now().Add(timeout))
+			_, _, peer, err := p.ReadFrom(rb)
+			if err != nil {
+				continue
+			}
+
+			rttMs := float64(time.Since(start).Microseconds()) / 1000.0
+			if bestRTT < 0 || rttMs < bestRTT {
+				bestRTT = rttMs
+			}
+			if peer.String() == dst.String() {
+				reachedDst = true
+			}
+		}
+
+		fields[fmt.Sprintf("hop_%d_rtt_ms", hopLimit)] = bestRTT
+		if bestRTT >= 0 {
+			reached = hopLimit
 		}
 		if reachedDst {
 			fields["trace_complete"] = 1.0

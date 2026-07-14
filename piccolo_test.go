@@ -785,7 +785,7 @@ func TestBwNativeLoopback(t *testing.T) {
 		Timeout:      5 * time.Second,
 		PreferIperf3: false,
 	}
-	target := HostEntry{Name: "loopback", Address: fmt.Sprintf("127.0.0.1:%d", port)}
+	target := HostEntry{Name: "loopback", Address: fmt.Sprintf("[::1]:%d", port)}
 	ctx := context.Background()
 	results, err := m.Run(ctx, target, cfg)
 	if err != nil {
@@ -822,7 +822,7 @@ func TestMtuMeasurerSkippedWithoutCap(t *testing.T) {
 	// when raw sockets are unavailable — which is the case in most CI environments.
 	m := &MtuMeasurer{hostname: "probe-a"}
 	cfg := MeasurerConfig{Ceiling: 1500, Timeout: 2 * time.Second}
-	target := HostEntry{Name: "loopback", Address: "127.0.0.1"}
+	target := HostEntry{Name: "loopback", Address: "::1"}
 	results, err := m.Run(context.Background(), target, cfg)
 	// Either succeeds (has CAP_NET_RAW) or returns skipped result — never hard error
 	if err != nil {
@@ -852,7 +852,7 @@ func TestTraceMeasurerName(t *testing.T) {
 func TestTraceMeasurerSkippedWithoutCap(t *testing.T) {
 	m := &TraceMeasurer{hostname: "probe-a"}
 	cfg := MeasurerConfig{MaxHops: 5, ProbesPerHop: 1, Timeout: time.Second}
-	target := HostEntry{Name: "loopback", Address: "127.0.0.1"}
+	target := HostEntry{Name: "loopback", Address: "::1"}
 	results, err := m.Run(context.Background(), target, cfg)
 	if err != nil {
 		t.Fatalf("Run() error (should degrade): %v", err)
@@ -945,7 +945,7 @@ func TestParseAgentConfigMeasurements(t *testing.T) {
         "hub_spoke": {"enabled": false, "hub": ""},
         "measurements": [
             {"type": "twamp", "interval": "30s", "targets": "all", "burst_size": 3},
-            {"type": "dns",   "interval": "60s", "resolvers": ["8.8.8.8"], "names": ["example.com"]}
+            {"type": "dns",   "interval": "60s", "resolvers": ["2620:fe::fe"], "names": ["example.com"]}
         ]
     }`)
 	cfg, err := parseAgentConfig(raw)
@@ -981,7 +981,7 @@ func TestDnsMeasurerRun(t *testing.T) {
 	m := &DnsMeasurer{hostname: "probe-a"}
 	cfg := MeasurerConfig{
 		Timeout:   2 * time.Second,
-		Resolvers: []string{"8.8.8.8"},
+		Resolvers: []string{"2620:fe::fe"}, // Quad9 IPv6 — reachable in IPv6-only environments
 		Names:     []string{"example.com"},
 	}
 	ctx := context.Background()

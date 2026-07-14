@@ -34,7 +34,7 @@ func (m *DnsMeasurer) probe(ctx context.Context, resolver, name string, timeout 
 		PreferGo: true,
 		Dial: func(ctx context.Context, network, address string) (net.Conn, error) {
 			d := net.Dialer{Timeout: timeout}
-			return d.DialContext(ctx, "udp", resolver+":53")
+			return d.DialContext(ctx, "udp", net.JoinHostPort(resolver, "53"))
 		},
 	}
 

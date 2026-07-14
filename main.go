@@ -1108,7 +1108,7 @@ func runMtuSubcommand() {
 
 func runDnsSubcommand() {
 	fs := flag.NewFlagSet("dns", flag.ExitOnError)
-	resolver := fs.String("resolver", "8.8.8.8", "DNS resolver IP")
+	resolver := fs.String("resolver", "2620:fe::fe", "DNS resolver IP (default: Quad9 IPv6)")
 	name     := fs.String("name", "example.com", "name to resolve")
 	timeout  := fs.Duration("timeout", 2*time.Second, "query timeout")
 	fs.Parse(os.Args[1:])

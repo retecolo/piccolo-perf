@@ -86,25 +86,38 @@ func (m *TraceMeasurer) trace(ctx context.Context, addr string, maxHops, probes 
 		}
 		wb, _ := msg.Marshal(nil)
 
-		start := time.Now()
-		c.SetDeadline(time.Now().Add(timeout))
-		if _, err := c.WriteTo(wb, dst); err != nil {
-			continue
+		bestRTT := -1.0
+		reachedDst := false
+
+		for probe := 0; probe < probes; probe++ {
+			start := time.Now()
+			c.SetDeadline(time.Now().Add(timeout))
+			if _, err := c.WriteTo(wb, dst); err != nil {
+				// write failure: this probe contributes nothing; bestRTT stays -1.0
+				continue
+			}
+
+			rb := make([]byte, 1500)
+			c.SetDeadline(time.Now().Add(timeout))
+			_, peer, err := c.ReadFrom(rb)
+			if err != nil {
+				continue
+			}
+
+			rttMs := float64(time.Since(start).Microseconds()) / 1000.0
+			if bestRTT < 0 || rttMs < bestRTT {
+				bestRTT = rttMs
+			}
+			if peer.String() == dst.String() {
+				reachedDst = true
+			}
 		}
 
-		rb := make([]byte, 1500)
-		c.SetDeadline(time.Now().Add(timeout))
-		_, peer, err := c.ReadFrom(rb)
-		if err != nil {
-			fields[fmt.Sprintf("hop_%d_rtt_ms", ttl)] = -1
-			continue
+		fields[fmt.Sprintf("hop_%d_rtt_ms", ttl)] = bestRTT
+		if bestRTT >= 0 {
+			reached = ttl
 		}
-
-		rttMs := float64(time.Since(start).Microseconds()) / 1000.0
-		fields[fmt.Sprintf("hop_%d_rtt_ms", ttl)] = rttMs
-		reached = ttl
-
-		if peer.String() == dst.String() {
+		if reachedDst {
 			fields["trace_complete"] = 1.0
 			break
 		}

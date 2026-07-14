@@ -508,7 +508,11 @@ func (c *Client) Run() error {
 		return fmt.Errorf("failed to resolve address: %v", err)
 	}
 
-	conn, err := net.DialUDP("udp", nil, addr)
+	network := "udp4"
+	if addr.IP.To4() == nil {
+		network = "udp6"
+	}
+	conn, err := net.DialUDP(network, nil, addr)
 	if err != nil {
 		return fmt.Errorf("failed to connect: %v", err)
 	}
@@ -647,7 +651,11 @@ func (c *Client) runBurst() (rtts []time.Duration, recv int) {
 		c.logger.Printf("resolve failed: %v", err)
 		return nil, 0
 	}
-	conn, err := net.DialUDP("udp", nil, addr)
+	network := "udp4"
+	if addr.IP.To4() == nil {
+		network = "udp6"
+	}
+	conn, err := net.DialUDP(network, nil, addr)
 	if err != nil {
 		c.logger.Printf("dial failed: %v", err)
 		return nil, 0

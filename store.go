@@ -49,6 +49,7 @@ func (s *LocalStore) enforceCap() error {
 		return err
 	}
 	scanner := bufio.NewScanner(s.file)
+	scanner.Buffer(make([]byte, 1<<20), 1<<20)
 	var lines []string
 	for scanner.Scan() {
 		lines = append(lines, scanner.Text())
@@ -79,6 +80,7 @@ func (s *LocalStore) Flush(ctx context.Context, fn func([]MeasureResult) error) 
 		return err
 	}
 	scanner := bufio.NewScanner(s.file)
+	scanner.Buffer(make([]byte, 1<<20), 1<<20)
 	var batch []MeasureResult
 	for scanner.Scan() {
 		select {
@@ -104,8 +106,12 @@ func (s *LocalStore) Flush(ctx context.Context, fn func([]MeasureResult) error) 
 		}
 	}
 	// Clear the file after successful flush
-	s.file.Truncate(0)
-	s.file.Seek(0, 0)
+	if err := s.file.Truncate(0); err != nil {
+		return fmt.Errorf("truncate store: %w", err)
+	}
+	if _, err := s.file.Seek(0, 0); err != nil {
+		return fmt.Errorf("seek store: %w", err)
+	}
 	return nil
 }
 

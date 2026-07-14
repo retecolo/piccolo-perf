@@ -515,7 +515,9 @@ func runAgent(port int, configURL, hostname string, configRefresh time.Duration,
 	}()
 
 	// Goroutine 3: Per-measurer schedulers (one goroutine per MeasurementSpec)
+	// Each scheduler gets its own channel so config updates are broadcast to all.
 	measurers := buildMeasurers(hostname, port, synced, logFile)
+	schedulerChans := make([]chan AgentConfig, 0, len(initialCfg.Measurements))
 	for _, spec := range initialCfg.Measurements {
 		spec := spec // capture
 		m, ok := measurers[spec.Type]
@@ -523,12 +525,38 @@ func runAgent(port int, configURL, hostname string, configRefresh time.Duration,
 			logger.Printf("[Agent] unknown measurement type %q — skipping", spec.Type)
 			continue
 		}
+		ch := make(chan AgentConfig, 1)
+		ch <- initialCfg // seed so scheduler starts immediately
+		schedulerChans = append(schedulerChans, ch)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			runMeasurerScheduler(ctx, m, spec, configCh, resultsCh, hostname, logger, initialCfg.HideSkipped)
+			runMeasurerScheduler(ctx, m, spec, ch, resultsCh, hostname, logger, initialCfg.HideSkipped)
 		}()
 	}
+
+	// Fan-out goroutine: broadcast each config update from configCh to all scheduler channels.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case cfg, ok := <-configCh:
+				if !ok {
+					return
+				}
+				for _, ch := range schedulerChans {
+					select {
+					case ch <- cfg:
+					case <-ctx.Done():
+						return
+					}
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 
 	// Goroutine 4: InfluxDB writer
 	wg.Add(1)
@@ -546,7 +574,7 @@ func runAgent(port int, configURL, hostname string, configRefresh time.Duration,
 // buildMeasurers constructs the full registry of supported measurer types.
 func buildMeasurers(hostname string, port int, synced bool, logFile *os.File) map[string]Measurer {
 	return map[string]Measurer{
-		"twamp": &TwampMeasurer{hostname: hostname, port: port, logFile: logFile, synced: synced},
+		"twamp": &TwampMeasurer{hostname: hostname, port: port, logFile: logFile},
 		"bw":    &BwMeasurer{hostname: hostname},
 		"trace": &TraceMeasurer{hostname: hostname},
 		"mtu":   &MtuMeasurer{hostname: hostname},

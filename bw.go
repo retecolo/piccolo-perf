@@ -162,7 +162,6 @@ func (s *BwServer) Start(port int) (int, error) {
 }
 
 func (s *BwServer) accept() {
-	buf := make([]byte, bwBufSize)
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
@@ -170,7 +169,7 @@ func (s *BwServer) accept() {
 		}
 		go func(c net.Conn) {
 			defer c.Close()
-			io.CopyBuffer(io.Discard, c, buf)
+			io.Copy(io.Discard, c)
 		}(conn)
 	}
 }

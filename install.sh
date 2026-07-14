@@ -2,7 +2,7 @@
 # piccolo-perf installer
 # Usage: /bin/sh -c "$(curl -fsSL https://raw.githubusercontent.com/buraglio/piccolo-perf/main/install.sh)"
 #
-# Installs the latest tinytwamp release binary to /usr/local/bin (or ~/bin if not writable).
+# Installs the latest piccolo-perf release binary to /usr/local/bin (or ~/bin if not writable).
 # Supports Linux, macOS, FreeBSD, OpenBSD, NetBSD, DragonFly BSD, Solaris.
 
 set -e

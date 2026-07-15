@@ -140,9 +140,30 @@ type rawHubSpoke struct {
 	Hub     string `json:"hub"`
 }
 
+func byteOffsetToLineCol(data []byte, offset int64) (line, col int) {
+	line = 1
+	col = 1
+	for i, b := range data {
+		if int64(i) >= offset {
+			break
+		}
+		if b == '\n' {
+			line++
+			col = 1
+		} else {
+			col++
+		}
+	}
+	return
+}
+
 func parseAgentConfig(data []byte) (AgentConfig, error) {
 	var raw rawAgentConfig
 	if err := json.Unmarshal(data, &raw); err != nil {
+		if synErr, ok := err.(*json.SyntaxError); ok {
+			line, col := byteOffsetToLineCol(data, synErr.Offset)
+			return AgentConfig{}, fmt.Errorf("JSON syntax error at line %d col %d: %w", line, col, err)
+		}
 		return AgentConfig{}, fmt.Errorf("JSON parse error: %w", err)
 	}
 	if raw.Topology == "" {

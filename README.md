@@ -368,57 +368,133 @@ docker run --network host \
 
 ## Prometheus Exporter
 
-The `twamp -mode exporter` subcommand runs the TWAMP-Light reflector, a TCP bandwidth sink, and all configured measurement schedulers simultaneously, exposing every result via a Prometheus `/metrics` endpoint. All five measurement types (TWAMP, bandwidth, traceroute, MTU, DNS) are exported — not just TWAMP.
+piccolo-perf can expose all measurement results as Prometheus metrics on a `/metrics` HTTP endpoint. Every configured measurement type (TWAMP, bandwidth, traceroute, MTU, DNS) is exported — not just TWAMP.
+
+### How it works
+
+The exporter runs three things simultaneously on each probe host:
+
+1. **TWAMP-Light reflector** — reflects UDP packets from other probes (passive)
+2. **Bandwidth sink** — TCP listener on port 5201 accepting test connections from peers (passive)
+3. **Measurement schedulers** — actively probes all configured targets on their configured intervals, caches the results, and serves them on `/metrics` when Prometheus scrapes
+
+Prometheus scrapes `/metrics` on each probe host. The probe host does not push to Prometheus — Prometheus pulls from it.
+
+### Step 1 — Create a config file
+
+The exporter uses the same config file as agent mode. Create it on a web server accessible from all probe hosts (nginx, caddy, or any static file host):
+
+```json
+{
+  "topology": "mesh",
+  "config_refresh": "5m",
+  "hosts": [
+    { "name": "probe-a", "address": "2001:db8::1", "site": "site-a" },
+    { "name": "probe-b", "address": "2001:db8::2", "site": "site-b" }
+  ],
+  "hub_spoke": { "enabled": false, "hub": "" },
+  "measurements": [
+    {
+      "type": "twamp", "interval": "60s", "targets": "all",
+      "burst_size": 5, "burst_interval": "200ms", "packet_timeout": "5s"
+    },
+    {
+      "type": "dns", "interval": "120s",
+      "resolvers": ["2620:fe::fe", "9.9.9.9"],
+      "names": ["example.com"]
+    }
+  ],
+  "influxdb": { "url": "", "token": "", "org": "", "bucket": "" }
+}
+```
+
+The `influxdb` block can be left blank if you are only using Prometheus.
+
+### Step 2 — Start the exporter on each probe host
 
 ```sh
+# Run in the foreground (test it first)
 sudo piccolo-perf twamp -mode exporter \
   -config-url http://config-server/piccolo-config.json \
   -probe-mode background \
   -metrics-addr :9862
 ```
 
-The measurements that run and the intervals at which they run are controlled by the `measurements[]` array in the config file, exactly as in agent mode.
+Verify it is working:
 
-**Probe modes:**
+```sh
+curl http://localhost:9862/metrics | grep piccolo_twamp
+```
 
-| Mode | Behaviour |
+You should see output like:
+
+```
+piccolo_twamp_rtt_avg_ms{source="probe-a",target="probe-b",...} 1.234
+piccolo_twamp_loss_pct{source="probe-a",target="probe-b",...} 0
+```
+
+### Step 3 — Install as a systemd service
+
+```sh
+sudo cp deploy/piccolo-perf-exporter.service /etc/systemd/system/
+
+# Edit the service file to set your config URL
+sudo nano /etc/systemd/system/piccolo-perf-exporter.service
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now piccolo-perf-exporter
+
+# Check it started correctly
+sudo systemctl status piccolo-perf-exporter
+curl http://localhost:9862/metrics | head -20
+```
+
+### Step 4 — Point Prometheus at each probe host
+
+Add a scrape job to your Prometheus configuration (`prometheus.yml`):
+
+```yaml
+scrape_configs:
+  - job_name: piccolo_perf
+    static_configs:
+      - targets:
+          - probe-a:9862
+          - probe-b:9862
+    scrape_interval: 60s
+    scrape_timeout: 10s
+```
+
+Then reload Prometheus:
+
+```sh
+curl -X POST http://localhost:9090/-/reload
+# or
+sudo systemctl reload prometheus
+```
+
+Open the Prometheus UI at `http://your-prometheus:9090` and query:
+
+```
+piccolo_twamp_rtt_avg_ms
+piccolo_twamp_loss_pct
+piccolo_dns_dns_rtt_ms
+```
+
+### Step 5 — Visualize in Grafana
+
+Import the pre-built dashboards from `deploy/grafana/`. See `deploy/grafana/README.md` for import instructions. The dashboards use InfluxDB by default; for Prometheus, point the queries at your Prometheus datasource instead.
+
+### Probe modes
+
+| Mode | When to use |
 |---|---|
-| `background` (default) | All configured measurers run on their own schedules in the background; scrapes return the latest cached results instantly |
-| `scrape` | Each Prometheus scrape triggers a fresh run of all configured measurers before responding; scrape timeout must be long enough to complete all probes |
-| `dual` | Background scheduling; results pushed to both Prometheus and InfluxDB simultaneously |
+| `background` (default) | **Recommended.** Probes run continuously in the background on their configured intervals. Scrapes return cached results instantly with no added latency. |
+| `scrape` | Each Prometheus scrape triggers a fresh run of all measurers before responding. Use when you need results at exactly the scrape interval. Increase `scrape_timeout` accordingly (see below). |
+| `dual` | Background scheduling; results pushed to both Prometheus and InfluxDB simultaneously. Use when you want both reporting backends from a single process. |
 
-**Metrics emitted per measurement type:**
+### With TLS
 
-Metrics are registered dynamically on first result. Labels on every metric: `source`, `target`, `site`, `topology`, plus measurement-specific tags.
-
-| Metric | Tags | Description |
-|---|---|---|
-| `piccolo_twamp_rtt_min_ms` | — | Min RTT in burst (ms) |
-| `piccolo_twamp_rtt_avg_ms` | — | Avg RTT (ms) |
-| `piccolo_twamp_rtt_max_ms` | — | Max RTT (ms) |
-| `piccolo_twamp_rtt_stddev_ms` | — | RTT standard deviation (ms) |
-| `piccolo_twamp_jitter_ms` | — | Mean absolute jitter (ms) |
-| `piccolo_twamp_loss_pct` | — | Packet loss percentage |
-| `piccolo_twamp_packets_sent` | — | Packets sent per burst |
-| `piccolo_twamp_packets_recv` | — | Packets received per burst |
-| `piccolo_bw_bw_tx_mbps` | `method=native\|iperf3` | Transmit throughput (Mbps) |
-| `piccolo_bw_bw_rx_mbps` | `method=iperf3` | Receive throughput (Mbps, iperf3 only) |
-| `piccolo_bw_bw_duration_s` | `method=native\|iperf3` | Test duration (s) |
-| `piccolo_trace_trace_hops` | `skipped=false\|true` | Furthest responding hop |
-| `piccolo_trace_trace_complete` | `skipped=false\|true` | 1.0 if destination reached, 0.0 otherwise |
-| `piccolo_trace_hop_N_rtt_ms` | `skipped=false\|true` | RTT to hop N (ms); -1.0 if no response |
-| `piccolo_mtu_mtu_effective_bytes` | `skipped=false\|true` | Effective path MTU (bytes) |
-| `piccolo_mtu_mtu_ceiling_bytes` | `skipped=false\|true` | Configured ceiling (bytes) |
-| `piccolo_dns_dns_rtt_ms` | `resolver=<ip>`, `name=<fqdn>` | Resolver query latency (ms) |
-| `piccolo_dns_dns_success` | `resolver=<ip>`, `name=<fqdn>` | 1.0 on success, 0.0 on failure |
-
-Metrics tagged `skipped=true` appear when `CAP_NET_RAW` is unavailable (MTU and traceroute). Set `hide_skipped: true` in the config to suppress them.
-
-**`scrape` mode timeout guidance:**
-
-Each scrape runs all configured measurers sequentially. Set the Prometheus `scrape_timeout` to at least the sum of all measurement timeouts × target count. For a host probing 3 targets with TWAMP (5s), trace (2s), and MTU (2s), allow at least 30s.
-
-**With TLS:**
+If Prometheus requires HTTPS from targets:
 
 ```sh
 sudo piccolo-perf twamp -mode exporter \
@@ -428,27 +504,55 @@ sudo piccolo-perf twamp -mode exporter \
   -metrics-tls-key  /etc/piccolo-perf/server.key
 ```
 
-Prometheus scrape config:
+Prometheus scrape config with TLS:
 
 ```yaml
 scrape_configs:
   - job_name: piccolo_perf
     scheme: https
     tls_config:
-      insecure_skip_verify: true   # or provide ca_file
+      insecure_skip_verify: true   # or ca_file: /path/to/ca.crt
     static_configs:
       - targets: [probe-a:9862, probe-b:9862]
     scrape_interval: 60s
-    scrape_timeout: 30s   # increase for scrape mode with many targets or measurers
+    scrape_timeout: 30s
 ```
 
-Install as a service:
+### `scrape` mode timeout guidance
 
-```sh
-sudo cp deploy/piccolo-perf-exporter.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now piccolo-perf-exporter
-```
+In `scrape` mode, each Prometheus scrape runs all configured measurers sequentially before responding. Set `scrape_timeout` to at least the sum of all measurement timeouts multiplied by the number of targets.
+
+Example: 3 targets, TWAMP (5s timeout), trace (2s), MTU (2s) = 3 × 9s = 27s minimum. Use 30s.
+
+In `background` mode (the default) the timeout can stay short (10s) since cached results are returned immediately.
+
+### Metrics reference
+
+All metrics include labels: `source`, `target`, `site`, `topology`, plus the measurement-specific tags listed below.
+
+| Metric | Extra labels | Description |
+|---|---|---|
+| `piccolo_twamp_rtt_min_ms` | — | Minimum RTT in burst (ms) |
+| `piccolo_twamp_rtt_avg_ms` | — | Average RTT (ms) |
+| `piccolo_twamp_rtt_max_ms` | — | Maximum RTT (ms) |
+| `piccolo_twamp_rtt_stddev_ms` | — | RTT standard deviation (ms) |
+| `piccolo_twamp_jitter_ms` | — | Mean absolute jitter / IPDV (ms) |
+| `piccolo_twamp_loss_pct` | — | Packet loss percentage |
+| `piccolo_twamp_packets_sent` | — | Packets sent per burst |
+| `piccolo_twamp_packets_recv` | — | Packets received per burst |
+| `piccolo_bw_bw_tx_mbps` | `method=native\|iperf3` | Transmit throughput (Mbps) |
+| `piccolo_bw_bw_rx_mbps` | `method=iperf3` | Receive throughput — iperf3 only (Mbps) |
+| `piccolo_bw_bw_duration_s` | `method=native\|iperf3` | Test duration (s) |
+| `piccolo_trace_trace_hops` | `skipped=false\|true` | Furthest responding hop number |
+| `piccolo_trace_trace_complete` | `skipped=false\|true` | 1.0 if destination reached, 0.0 otherwise |
+| `piccolo_trace_hop_N_rtt_ms` | `skipped=false\|true` | RTT to hop N (ms); -1.0 if no response |
+| `piccolo_mtu_mtu_effective_bytes` | `skipped=false\|true` | Effective path MTU (bytes) |
+| `piccolo_mtu_mtu_ceiling_bytes` | `skipped=false\|true` | Configured ceiling (bytes) |
+| `piccolo_dns_dns_rtt_ms` | `resolver=<ip>`, `name=<fqdn>` | Resolver query latency (ms) |
+| `piccolo_dns_dns_success` | `resolver=<ip>`, `name=<fqdn>` | 1.0 on success, 0.0 on failure |
+| `twamp_reflected_packets_total` | `source=<hostname>` | Cumulative packets reflected by this host |
+
+Metrics tagged `skipped=true` appear when `CAP_NET_RAW` is unavailable (MTU, traceroute). Set `hide_skipped: true` in the config to suppress them entirely.
 
 ## IPv6
 

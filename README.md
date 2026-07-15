@@ -414,11 +414,28 @@ The `influxdb` block can be left blank if you are only using Prometheus.
 
 ```sh
 # Run in the foreground (test it first)
-sudo piccolo-perf twamp -mode exporter \
+sudo piccolo-perf exporter \
   -config-url http://config-server/piccolo-config.json \
   -probe-mode background \
   -metrics-addr :9862
 ```
+
+> **Note:** `exporter` is a top-level subcommand — not a mode of `agent`. The correct form is `piccolo-perf exporter ...`, not `piccolo-perf agent -mode exporter`.
+
+**Exporter flags:**
+
+| Flag | Default | Description |
+|---|---|---|
+| `-config-url` | — | HTTP URL of topology JSON (required) |
+| `-metrics-addr` | `:9862` | Address to serve `/metrics` on |
+| `-probe-mode` | `background` | `background`, `scrape`, or `dual` |
+| `-port` | `862` | TWAMP UDP port |
+| `-hostname` | auto-detected | Override hostname for topology lookup |
+| `-config-refresh` | from config | Config re-fetch interval override |
+| `-no-sync` | `false` | Assert clock is NOT NTP-synchronized |
+| `-metrics-tls-cert` | `""` | TLS certificate file (enables HTTPS) |
+| `-metrics-tls-key` | `""` | TLS key file |
+| `-logfile` | `""` | Log file path (stdout if empty) |
 
 Verify it is working:
 

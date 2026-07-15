@@ -893,6 +893,8 @@ func main() {
 		runDnsSubcommand()
 	case "agent":
 		runAgentSubcommand()
+	case "exporter":
+		runExporterSubcommand()
 	case "version", "--version", "-version":
 		fmt.Println(version)
 	default:
@@ -906,12 +908,13 @@ func printUsage() {
 	fmt.Fprintf(os.Stderr, `piccolo-perf — network performance toolkit
 
 Usage:
-  piccolo-perf twamp  [client|server|agent|exporter]
-  piccolo-perf bw     [client|server]
-  piccolo-perf trace  -target <addr> [flags]
-  piccolo-perf mtu    -target <addr> [flags]
-  piccolo-perf dns    -resolver <ip> -name <fqdn> [flags]
-  piccolo-perf agent  -config-url <url> [flags]
+  piccolo-perf twamp     [client|server|agent|exporter]
+  piccolo-perf bw        [client|server]
+  piccolo-perf trace     -target <addr> [flags]
+  piccolo-perf mtu       -target <addr> [flags]
+  piccolo-perf dns       -resolver <ip> -name <fqdn> [flags]
+  piccolo-perf agent     -config-url <url> [flags]
+  piccolo-perf exporter  -config-url <url> [flags]
   piccolo-perf version
 `)
 }
@@ -1190,6 +1193,38 @@ func runAgentSubcommand() {
 		defer logFile.Close()
 	}
 	runAgent(*port, *configURL, *hostname, *cfgRefresh, !*noSync, logFile)
+}
+
+func runExporterSubcommand() {
+	fs := flag.NewFlagSet("exporter", flag.ExitOnError)
+	configURL   := fs.String("config-url", "", "topology config URL (required)")
+	hostname    := fs.String("hostname", "", "override hostname")
+	cfgRefresh  := fs.Duration("config-refresh", 0, "config refresh interval")
+	port        := fs.Int("port", defaultPort, "TWAMP UDP port")
+	noSync      := fs.Bool("no-sync", false, "assert clock unsynchronized")
+	probeMode   := fs.String("probe-mode", "background", "background, scrape, or dual")
+	metricsAddr := fs.String("metrics-addr", ":9862", "Prometheus metrics listen address")
+	metricsCert := fs.String("metrics-tls-cert", "", "TLS certificate file")
+	metricsKey  := fs.String("metrics-tls-key", "", "TLS key file")
+	logPath     := fs.String("logfile", "", "log file path")
+	fs.Parse(os.Args[1:])
+	if *configURL == "" {
+		fmt.Fprintln(os.Stderr, "exporter requires -config-url")
+		os.Exit(1)
+	}
+	var logFile *os.File
+	if *logPath != "" {
+		var err error
+		logFile, err = os.OpenFile(*logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		defer logFile.Close()
+	}
+	runExporter(*port, *configURL, *hostname, *cfgRefresh,
+		*probeMode, *metricsAddr, *metricsCert, *metricsKey,
+		!*noSync, logFile)
 }
 
 // runServerAsDaemon and platformHandleShutdown are implemented in

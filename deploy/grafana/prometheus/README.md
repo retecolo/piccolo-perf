@@ -1,6 +1,6 @@
 # piccolo-perf Grafana Dashboards — Prometheus
 
-Prometheus-native dashboards using PromQL. Use these when your piccolo-perf probes report to Prometheus (via `piccolo-perf exporter`).
+Prometheus-native dashboards using PromQL. Use these when your piccolo-perf probes report to Prometheus via `piccolo-perf exporter`.
 
 For InfluxDB (Flux) dashboards, see the parent `../` directory.
 
@@ -27,9 +27,36 @@ In Grafana → **Connections → Data sources → Add new data source → Promet
 
 | Field | Value |
 |---|---|
-| URL | `http://localhost:9090` (or your Prometheus address) |
-| Scrape interval | Match your `piccolo-perf exporter` scrape interval (default 60s) |
+| URL | `https://your-prometheus-host:9090` |
+| TLS — Skip TLS verification | Enable if using self-signed certs |
+| Basic auth | Enable; enter Prometheus username/password |
+
+The `prometheus_hardened` Ansible role configures Prometheus with TLS and basic auth. Grafana must be configured with matching credentials to scrape `/api/v1/query`.
+
+## Label reference
+
+All dashboards scope queries to `job="piccolo_perf"` to avoid conflicts with other exporters (node_exporter, etc.).
+
+Labels available on every `piccolo_*` metric:
+
+| Label | Source | Example |
+|---|---|---|
+| `source` | piccolo-perf hostname | `probe-a` |
+| `target` | peer hostname from config | `probe-b` |
+| `site` | `site` field in config hosts array | `809` |
+| `topology` | `topology` field from config | `mesh` |
+| `instance` | Added by Prometheus — probe's mesh IPv6 and port | `[fd7a:115c:a1e0:809::12]:9862` |
+| `job` | Prometheus job name | `piccolo_perf` |
+
+The `site` template variable in each dashboard lets you filter by site as defined in `piccolo_perf_hosts` in your Ansible `group_vars/all.yml`.
 
 ## Template variables
 
-Every dashboard exposes `source` and `target` dropdowns (plus measurement-specific ones like `resolver` for DNS, `method` for bandwidth). Values are populated automatically from your Prometheus label set.
+| Variable | Available in | Populated from |
+|---|---|---|
+| `source` | All dashboards | Probe hostnames |
+| `target` | TWAMP, MTU/trace, overview | Peer hostnames |
+| `site` | All dashboards | Site labels from config |
+| `resolver` | DNS | Resolver IPs from config |
+| `name` | DNS | Queried FQDNs |
+| `method` | Bandwidth | `native` or `iperf3` |

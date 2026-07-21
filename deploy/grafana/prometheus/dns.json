@@ -20,7 +20,7 @@
   "description": "DNS resolver latency and success rate via Prometheus",
   "tags": ["piccolo-perf", "prometheus", "dns", "resolver"],
   "schemaVersion": 38,
-  "version": 1,
+  "version": 2,
   "refresh": "2m",
   "time": { "from": "now-6h", "to": "now" },
   "timepicker": {},
@@ -31,7 +31,7 @@
         "label": "Source",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "query": "label_values(piccolo_dns_dns_rtt_ms, source)",
+        "query": "label_values(piccolo_dns_dns_rtt_ms{job=\"piccolo_perf\"}, source)",
         "multi": true,
         "includeAll": true,
         "current": { "text": "All", "value": "$__all" }
@@ -41,7 +41,7 @@
         "label": "Resolver",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "query": "label_values(piccolo_dns_dns_rtt_ms, resolver)",
+        "query": "label_values(piccolo_dns_dns_rtt_ms{job=\"piccolo_perf\"}, resolver)",
         "multi": true,
         "includeAll": true,
         "current": { "text": "All", "value": "$__all" }
@@ -51,7 +51,17 @@
         "label": "Name",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "query": "label_values(piccolo_dns_dns_rtt_ms, name)",
+        "query": "label_values(piccolo_dns_dns_rtt_ms{job=\"piccolo_perf\"}, name)",
+        "multi": true,
+        "includeAll": true,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "site",
+        "label": "Site",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "query": "label_values(piccolo_dns_dns_rtt_ms{job=\"piccolo_perf\"}, site)",
         "multi": true,
         "includeAll": true,
         "current": { "text": "All", "value": "$__all" }
@@ -67,7 +77,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_dns_dns_rtt_ms{source=~\"$source\", resolver=~\"$resolver\", name=~\"$name\"}",
+          "expr": "piccolo_dns_dns_rtt_ms{job=\"piccolo_perf\", source=~\"$source\", resolver=~\"$resolver\", name=~\"$name\", site=~\"$site\"}",
           "legendFormat": "{{source}} → {{resolver}} ({{name}})",
           "refId": "A"
         }
@@ -75,7 +85,7 @@
       "fieldConfig": {
         "defaults": { "unit": "ms", "custom": { "lineWidth": 1, "fillOpacity": 5 } }
       },
-      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "min", "max", "p95"] } }
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "min", "max", "last"] } }
     },
     {
       "id": 2,
@@ -85,7 +95,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_dns_dns_success{source=~\"$source\", resolver=~\"$resolver\", name=~\"$name\"} * 100",
+          "expr": "piccolo_dns_dns_success{job=\"piccolo_perf\", source=~\"$source\", resolver=~\"$resolver\", name=~\"$name\", site=~\"$site\"} * 100",
           "legendFormat": "{{source}} → {{resolver}}",
           "refId": "A"
         }
@@ -112,7 +122,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_dns_dns_success{source=~\"$source\", resolver=~\"$resolver\", name=~\"$name\"} * 100",
+          "expr": "piccolo_dns_dns_success{job=\"piccolo_perf\", source=~\"$source\", resolver=~\"$resolver\", name=~\"$name\", site=~\"$site\"} * 100",
           "legendFormat": "{{source}} → {{resolver}}",
           "refId": "A",
           "instant": true
@@ -138,17 +148,17 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "quantile(0.50, piccolo_dns_dns_rtt_ms{source=~\"$source\", resolver=~\"$resolver\"})",
+          "expr": "quantile(0.50, piccolo_dns_dns_rtt_ms{job=\"piccolo_perf\", source=~\"$source\", resolver=~\"$resolver\", site=~\"$site\"})",
           "legendFormat": "p50",
           "refId": "p50"
         },
         {
-          "expr": "quantile(0.95, piccolo_dns_dns_rtt_ms{source=~\"$source\", resolver=~\"$resolver\"})",
+          "expr": "quantile(0.95, piccolo_dns_dns_rtt_ms{job=\"piccolo_perf\", source=~\"$source\", resolver=~\"$resolver\", site=~\"$site\"})",
           "legendFormat": "p95",
           "refId": "p95"
         },
         {
-          "expr": "quantile(0.99, piccolo_dns_dns_rtt_ms{source=~\"$source\", resolver=~\"$resolver\"})",
+          "expr": "quantile(0.99, piccolo_dns_dns_rtt_ms{job=\"piccolo_perf\", source=~\"$source\", resolver=~\"$resolver\", site=~\"$site\"})",
           "legendFormat": "p99",
           "refId": "p99"
         }
@@ -168,13 +178,13 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_dns_dns_rtt_ms{source=~\"$source\", resolver=~\"$resolver\", name=~\"$name\"}",
+          "expr": "piccolo_dns_dns_rtt_ms{job=\"piccolo_perf\", source=~\"$source\", resolver=~\"$resolver\", name=~\"$name\", site=~\"$site\"}",
           "legendFormat": "{{source}} / {{resolver}} / {{name}}",
           "refId": "A",
           "instant": true
         },
         {
-          "expr": "piccolo_dns_dns_success{source=~\"$source\", resolver=~\"$resolver\", name=~\"$name\"} * 100",
+          "expr": "piccolo_dns_dns_success{job=\"piccolo_perf\", source=~\"$source\", resolver=~\"$resolver\", name=~\"$name\", site=~\"$site\"} * 100",
           "legendFormat": "{{source}} / {{resolver}} / {{name}}",
           "refId": "B",
           "instant": true
@@ -183,7 +193,12 @@
       "fieldConfig": {
         "overrides": [
           { "matcher": { "id": "byName", "options": "Value #A" }, "properties": [{ "id": "displayName", "value": "RTT (ms)" }, { "id": "unit", "value": "ms" }, { "id": "decimals", "value": 2 }] },
-          { "matcher": { "id": "byName", "options": "Value #B" }, "properties": [{ "id": "displayName", "value": "Success %" }, { "id": "unit", "value": "percent" }, { "id": "custom.displayMode", "value": "color-background" }, { "id": "thresholds", "value": { "mode": "absolute", "steps": [{ "color": "red", "value": 0 }, { "color": "yellow", "value": 90 }, { "color": "green", "value": 99 }] } }] }
+          { "matcher": { "id": "byName", "options": "Value #B" }, "properties": [
+            { "id": "displayName", "value": "Success %" },
+            { "id": "unit", "value": "percent" },
+            { "id": "custom.displayMode", "value": "color-background" },
+            { "id": "thresholds", "value": { "mode": "absolute", "steps": [{ "color": "red", "value": 0 }, { "color": "yellow", "value": 90 }, { "color": "green", "value": 99 }] } }
+          ]}
         ]
       },
       "options": { "sortBy": [{ "displayName": "RTT (ms)" }] }

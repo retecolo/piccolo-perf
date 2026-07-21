@@ -20,7 +20,7 @@
   "description": "TCP throughput measurements via Prometheus",
   "tags": ["piccolo-perf", "prometheus", "bandwidth", "throughput"],
   "schemaVersion": 38,
-  "version": 1,
+  "version": 2,
   "refresh": "5m",
   "time": { "from": "now-24h", "to": "now" },
   "timepicker": {},
@@ -31,7 +31,7 @@
         "label": "Source",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "query": "label_values(piccolo_bw_bw_tx_mbps, source)",
+        "query": "label_values(piccolo_bw_bw_tx_mbps{job=\"piccolo_perf\"}, source)",
         "multi": true,
         "includeAll": true,
         "current": { "text": "All", "value": "$__all" }
@@ -41,7 +41,17 @@
         "label": "Method",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "query": "label_values(piccolo_bw_bw_tx_mbps, method)",
+        "query": "label_values(piccolo_bw_bw_tx_mbps{job=\"piccolo_perf\"}, method)",
+        "multi": true,
+        "includeAll": true,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "site",
+        "label": "Site",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "query": "label_values(piccolo_bw_bw_tx_mbps{job=\"piccolo_perf\"}, site)",
         "multi": true,
         "includeAll": true,
         "current": { "text": "All", "value": "$__all" }
@@ -57,7 +67,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_bw_bw_tx_mbps{source=~\"$source\", method=~\"$method\"}",
+          "expr": "piccolo_bw_bw_tx_mbps{job=\"piccolo_perf\", source=~\"$source\", method=~\"$method\", site=~\"$site\"}",
           "legendFormat": "{{source}} → {{target}} ({{method}})",
           "refId": "A"
         }
@@ -75,7 +85,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_bw_bw_rx_mbps",
+          "expr": "piccolo_bw_bw_rx_mbps{job=\"piccolo_perf\", source=~\"$source\", site=~\"$site\"}",
           "legendFormat": "{{source}} → {{target}}",
           "refId": "A"
         }
@@ -90,7 +100,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_bw_bw_tx_mbps{source=~\"$source\", method=~\"$method\"}",
+          "expr": "piccolo_bw_bw_tx_mbps{job=\"piccolo_perf\", source=~\"$source\", method=~\"$method\", site=~\"$site\"}",
           "legendFormat": "{{source}} → {{target}} ({{method}})",
           "refId": "A",
           "instant": true
@@ -107,7 +117,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "count by (method) (piccolo_bw_bw_tx_mbps)",
+          "expr": "count by (method) (piccolo_bw_bw_tx_mbps{job=\"piccolo_perf\"})",
           "legendFormat": "{{method}}",
           "refId": "A",
           "instant": true

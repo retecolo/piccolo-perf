@@ -13,15 +13,14 @@
     { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" },
     { "type": "panel", "id": "timeseries", "name": "Time series", "version": "" },
     { "type": "panel", "id": "stat", "name": "Stat", "version": "" },
-    { "type": "panel", "id": "bargauge", "name": "Bar gauge", "version": "" },
-    { "type": "panel", "id": "heatmap", "name": "Heatmap", "version": "" }
+    { "type": "panel", "id": "bargauge", "name": "Bar gauge", "version": "" }
   ],
   "title": "piccolo-perf — TWAMP-Light (Prometheus)",
   "uid": "piccolo-prom-twamp",
   "description": "RFC 5357 TWAMP-Light RTT, jitter, and packet loss via Prometheus",
   "tags": ["piccolo-perf", "prometheus", "twamp", "rtt", "latency"],
   "schemaVersion": 38,
-  "version": 1,
+  "version": 2,
   "refresh": "1m",
   "time": { "from": "now-6h", "to": "now" },
   "timepicker": {},
@@ -32,7 +31,7 @@
         "label": "Source",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "query": "label_values(piccolo_twamp_rtt_avg_ms, source)",
+        "query": "label_values(piccolo_twamp_rtt_avg_ms{job=\"piccolo_perf\"}, source)",
         "multi": true,
         "includeAll": true,
         "current": { "text": "All", "value": "$__all" }
@@ -42,7 +41,17 @@
         "label": "Target",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "query": "label_values(piccolo_twamp_rtt_avg_ms, target)",
+        "query": "label_values(piccolo_twamp_rtt_avg_ms{job=\"piccolo_perf\"}, target)",
+        "multi": true,
+        "includeAll": true,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "site",
+        "label": "Site",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "query": "label_values(piccolo_twamp_rtt_avg_ms{job=\"piccolo_perf\"}, site)",
         "multi": true,
         "includeAll": true,
         "current": { "text": "All", "value": "$__all" }
@@ -58,7 +67,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_twamp_rtt_avg_ms{source=~\"$source\", target=~\"$target\"}",
+          "expr": "piccolo_twamp_rtt_avg_ms{job=\"piccolo_perf\", source=~\"$source\", target=~\"$target\", site=~\"$site\"}",
           "legendFormat": "{{source}} → {{target}}",
           "refId": "A"
         }
@@ -76,17 +85,17 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_twamp_rtt_min_ms{source=~\"$source\", target=~\"$target\"}",
+          "expr": "piccolo_twamp_rtt_min_ms{job=\"piccolo_perf\", source=~\"$source\", target=~\"$target\", site=~\"$site\"}",
           "legendFormat": "min {{source}} → {{target}}",
           "refId": "A"
         },
         {
-          "expr": "piccolo_twamp_rtt_avg_ms{source=~\"$source\", target=~\"$target\"}",
+          "expr": "piccolo_twamp_rtt_avg_ms{job=\"piccolo_perf\", source=~\"$source\", target=~\"$target\", site=~\"$site\"}",
           "legendFormat": "avg {{source}} → {{target}}",
           "refId": "B"
         },
         {
-          "expr": "piccolo_twamp_rtt_max_ms{source=~\"$source\", target=~\"$target\"}",
+          "expr": "piccolo_twamp_rtt_max_ms{job=\"piccolo_perf\", source=~\"$source\", target=~\"$target\", site=~\"$site\"}",
           "legendFormat": "max {{source}} → {{target}}",
           "refId": "C"
         }
@@ -107,7 +116,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_twamp_rtt_stddev_ms{source=~\"$source\", target=~\"$target\"}",
+          "expr": "piccolo_twamp_rtt_stddev_ms{job=\"piccolo_perf\", source=~\"$source\", target=~\"$target\", site=~\"$site\"}",
           "legendFormat": "{{source}} → {{target}}",
           "refId": "A"
         }
@@ -122,7 +131,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_twamp_jitter_ms{source=~\"$source\", target=~\"$target\"}",
+          "expr": "piccolo_twamp_jitter_ms{job=\"piccolo_perf\", source=~\"$source\", target=~\"$target\", site=~\"$site\"}",
           "legendFormat": "{{source}} → {{target}}",
           "refId": "A"
         }
@@ -146,7 +155,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_twamp_loss_pct{source=~\"$source\", target=~\"$target\"}",
+          "expr": "piccolo_twamp_loss_pct{job=\"piccolo_perf\", source=~\"$source\", target=~\"$target\", site=~\"$site\"}",
           "legendFormat": "{{source}} → {{target}}",
           "refId": "A"
         }
@@ -173,7 +182,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_twamp_loss_pct{source=~\"$source\", target=~\"$target\"}",
+          "expr": "piccolo_twamp_loss_pct{job=\"piccolo_perf\", source=~\"$source\", target=~\"$target\", site=~\"$site\"}",
           "legendFormat": "{{source}} → {{target}}",
           "refId": "A",
           "instant": true
@@ -201,12 +210,12 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_twamp_packets_sent{source=~\"$source\", target=~\"$target\"}",
+          "expr": "piccolo_twamp_packets_sent{job=\"piccolo_perf\", source=~\"$source\", target=~\"$target\", site=~\"$site\"}",
           "legendFormat": "sent {{source}} → {{target}}",
           "refId": "A"
         },
         {
-          "expr": "piccolo_twamp_packets_recv{source=~\"$source\", target=~\"$target\"}",
+          "expr": "piccolo_twamp_packets_recv{job=\"piccolo_perf\", source=~\"$source\", target=~\"$target\", site=~\"$site\"}",
           "legendFormat": "recv {{source}} → {{target}}",
           "refId": "B"
         }
@@ -215,14 +224,15 @@
     },
     {
       "id": 8,
-      "title": "Reflected packets total",
+      "title": "Reflected packets total (by instance)",
+      "description": "instance label is the probe's mesh IPv6 address and port — set by Prometheus scrape config",
       "type": "stat",
       "gridPos": { "x": 12, "y": 28, "w": 12, "h": 6 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "twamp_reflected_packets_total",
-          "legendFormat": "{{source}}",
+          "expr": "twamp_reflected_packets_total{job=\"piccolo_perf\"}",
+          "legendFormat": "{{source}} ({{instance}})",
           "refId": "A",
           "instant": true
         }

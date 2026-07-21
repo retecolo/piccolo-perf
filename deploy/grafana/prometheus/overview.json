@@ -20,7 +20,7 @@
   "description": "Fleet-wide summary of all piccolo-perf measurement types via Prometheus",
   "tags": ["piccolo-perf", "prometheus", "network", "performance"],
   "schemaVersion": 38,
-  "version": 1,
+  "version": 2,
   "refresh": "1m",
   "time": { "from": "now-6h", "to": "now" },
   "timepicker": {},
@@ -31,7 +31,7 @@
         "label": "Source",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "query": "label_values(piccolo_twamp_rtt_avg_ms, source)",
+        "query": "label_values(piccolo_twamp_rtt_avg_ms{job=\"piccolo_perf\"}, source)",
         "multi": true,
         "includeAll": true,
         "current": { "text": "All", "value": "$__all" }
@@ -41,7 +41,17 @@
         "label": "Target",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "query": "label_values(piccolo_twamp_rtt_avg_ms, target)",
+        "query": "label_values(piccolo_twamp_rtt_avg_ms{job=\"piccolo_perf\"}, target)",
+        "multi": true,
+        "includeAll": true,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "site",
+        "label": "Site",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "query": "label_values(piccolo_twamp_rtt_avg_ms{job=\"piccolo_perf\"}, site)",
         "multi": true,
         "includeAll": true,
         "current": { "text": "All", "value": "$__all" }
@@ -57,16 +67,13 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_twamp_rtt_avg_ms{source=~\"$source\", target=~\"$target\"}",
+          "expr": "piccolo_twamp_rtt_avg_ms{job=\"piccolo_perf\", source=~\"$source\", target=~\"$target\", site=~\"$site\"}",
           "legendFormat": "{{source}} → {{target}}",
           "refId": "A"
         }
       ],
       "fieldConfig": {
-        "defaults": {
-          "unit": "ms",
-          "custom": { "lineWidth": 1, "fillOpacity": 5 }
-        }
+        "defaults": { "unit": "ms", "custom": { "lineWidth": 1, "fillOpacity": 5 } }
       },
       "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "min", "max"] } }
     },
@@ -78,9 +85,10 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_twamp_loss_pct{source=~\"$source\", target=~\"$target\"}",
+          "expr": "piccolo_twamp_loss_pct{job=\"piccolo_perf\", source=~\"$source\", target=~\"$target\", site=~\"$site\"}",
           "legendFormat": "{{source}} → {{target}}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "fieldConfig": {
@@ -103,9 +111,10 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_twamp_jitter_ms{source=~\"$source\", target=~\"$target\"}",
+          "expr": "piccolo_twamp_jitter_ms{job=\"piccolo_perf\", source=~\"$source\", target=~\"$target\", site=~\"$site\"}",
           "legendFormat": "{{source}} → {{target}}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "fieldConfig": {
@@ -128,9 +137,10 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_bw_bw_tx_mbps{source=~\"$source\", target=~\"$target\"}",
-          "legendFormat": "{{source}} → {{target}}",
-          "refId": "A"
+          "expr": "piccolo_bw_bw_tx_mbps{job=\"piccolo_perf\", source=~\"$source\", target=~\"$target\", site=~\"$site\"}",
+          "legendFormat": "{{source}} → {{target}} ({{method}})",
+          "refId": "A",
+          "instant": true
         }
       ],
       "fieldConfig": { "defaults": { "unit": "Mbps" } },
@@ -144,9 +154,10 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_dns_dns_success * 100",
+          "expr": "piccolo_dns_dns_success{job=\"piccolo_perf\"} * 100",
           "legendFormat": "{{source}} → {{resolver}}",
-          "refId": "A"
+          "refId": "A",
+          "instant": true
         }
       ],
       "fieldConfig": {
@@ -169,7 +180,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_bw_bw_tx_mbps{source=~\"$source\", target=~\"$target\"}",
+          "expr": "piccolo_bw_bw_tx_mbps{job=\"piccolo_perf\", source=~\"$source\", site=~\"$site\"}",
           "legendFormat": "{{source}} → {{target}} ({{method}})",
           "refId": "A"
         }
@@ -184,7 +195,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_dns_dns_rtt_ms",
+          "expr": "piccolo_dns_dns_rtt_ms{job=\"piccolo_perf\"}",
           "legendFormat": "{{source}} → {{resolver}} ({{name}})",
           "refId": "A"
         }
@@ -199,7 +210,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_mtu_mtu_effective_bytes{skipped=\"false\"}",
+          "expr": "piccolo_mtu_mtu_effective_bytes{job=\"piccolo_perf\", skipped=\"false\", source=~\"$source\", site=~\"$site\"}",
           "legendFormat": "{{source}} → {{target}}",
           "refId": "A",
           "instant": true
@@ -216,7 +227,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_trace_trace_hops{skipped=\"false\"}",
+          "expr": "piccolo_trace_trace_hops{job=\"piccolo_perf\", skipped=\"false\", source=~\"$source\", site=~\"$site\"}",
           "legendFormat": "{{source}} → {{target}}",
           "refId": "A",
           "instant": true

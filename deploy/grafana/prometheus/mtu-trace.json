@@ -21,7 +21,7 @@
   "description": "Path MTU discovery and traceroute hop latency via Prometheus",
   "tags": ["piccolo-perf", "prometheus", "mtu", "traceroute", "path"],
   "schemaVersion": 38,
-  "version": 1,
+  "version": 2,
   "refresh": "10m",
   "time": { "from": "now-24h", "to": "now" },
   "timepicker": {},
@@ -32,7 +32,7 @@
         "label": "Source",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "query": "label_values(piccolo_mtu_mtu_effective_bytes, source)",
+        "query": "label_values(piccolo_mtu_mtu_effective_bytes{job=\"piccolo_perf\"}, source)",
         "multi": true,
         "includeAll": true,
         "current": { "text": "All", "value": "$__all" }
@@ -42,7 +42,17 @@
         "label": "Target",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-        "query": "label_values(piccolo_mtu_mtu_effective_bytes, target)",
+        "query": "label_values(piccolo_mtu_mtu_effective_bytes{job=\"piccolo_perf\"}, target)",
+        "multi": true,
+        "includeAll": true,
+        "current": { "text": "All", "value": "$__all" }
+      },
+      {
+        "name": "site",
+        "label": "Site",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+        "query": "label_values(piccolo_mtu_mtu_effective_bytes{job=\"piccolo_perf\"}, site)",
         "multi": true,
         "includeAll": true,
         "current": { "text": "All", "value": "$__all" }
@@ -65,7 +75,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_mtu_mtu_effective_bytes{source=~\"$source\", target=~\"$target\", skipped=\"false\"}",
+          "expr": "piccolo_mtu_mtu_effective_bytes{job=\"piccolo_perf\", skipped=\"false\", source=~\"$source\", target=~\"$target\", site=~\"$site\"}",
           "legendFormat": "{{source}} → {{target}}",
           "refId": "A"
         }
@@ -92,7 +102,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_mtu_mtu_effective_bytes{source=~\"$source\", target=~\"$target\", skipped=\"false\"}",
+          "expr": "piccolo_mtu_mtu_effective_bytes{job=\"piccolo_perf\", skipped=\"false\", source=~\"$source\", target=~\"$target\", site=~\"$site\"}",
           "legendFormat": "{{source}} → {{target}}",
           "refId": "A",
           "instant": true
@@ -117,7 +127,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_mtu_mtu_effective_bytes{source=~\"$source\", target=~\"$target\", skipped=\"false\"}",
+          "expr": "piccolo_mtu_mtu_effective_bytes{job=\"piccolo_perf\", skipped=\"false\", source=~\"$source\", target=~\"$target\", site=~\"$site\"}",
           "legendFormat": "{{source}} → {{target}}",
           "refId": "A"
         }
@@ -149,7 +159,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_trace_trace_hops{source=~\"$source\", target=~\"$target\", skipped=\"false\"}",
+          "expr": "piccolo_trace_trace_hops{job=\"piccolo_perf\", skipped=\"false\", source=~\"$source\", target=~\"$target\", site=~\"$site\"}",
           "legendFormat": "{{source}} → {{target}}",
           "refId": "A"
         }
@@ -167,7 +177,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_trace_trace_complete{source=~\"$source\", target=~\"$target\", skipped=\"false\"} * 100",
+          "expr": "piccolo_trace_trace_complete{job=\"piccolo_perf\", skipped=\"false\", source=~\"$source\", target=~\"$target\", site=~\"$site\"} * 100",
           "legendFormat": "{{source}} → {{target}}",
           "refId": "A"
         }
@@ -193,7 +203,7 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_trace_hop_1_rtt_ms{source=~\"$source\", target=~\"$target\", skipped=\"false\"} >= 0",
+          "expr": "piccolo_trace_hop_1_rtt_ms{job=\"piccolo_perf\", skipped=\"false\", source=~\"$source\", target=~\"$target\", site=~\"$site\"} >= 0",
           "legendFormat": "{{source}} → {{target}} hop 1",
           "refId": "A"
         }
@@ -208,13 +218,13 @@
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "piccolo_trace_trace_hops{source=~\"$source\", target=~\"$target\", skipped=\"false\"}",
+          "expr": "piccolo_trace_trace_hops{job=\"piccolo_perf\", skipped=\"false\", source=~\"$source\", target=~\"$target\", site=~\"$site\"}",
           "legendFormat": "{{source}} → {{target}}",
           "refId": "A",
           "instant": true
         },
         {
-          "expr": "piccolo_trace_trace_complete{source=~\"$source\", target=~\"$target\", skipped=\"false\"}",
+          "expr": "piccolo_trace_trace_complete{job=\"piccolo_perf\", skipped=\"false\", source=~\"$source\", target=~\"$target\", site=~\"$site\"}",
           "legendFormat": "{{source}} → {{target}}",
           "refId": "B",
           "instant": true
@@ -223,7 +233,11 @@
       "fieldConfig": {
         "overrides": [
           { "matcher": { "id": "byName", "options": "Value #A" }, "properties": [{ "id": "displayName", "value": "Hops" }] },
-          { "matcher": { "id": "byName", "options": "Value #B" }, "properties": [{ "id": "displayName", "value": "Complete" }, { "id": "custom.displayMode", "value": "color-background" }, { "id": "thresholds", "value": { "mode": "absolute", "steps": [{ "color": "red", "value": 0 }, { "color": "green", "value": 1 }] } }] }
+          { "matcher": { "id": "byName", "options": "Value #B" }, "properties": [
+            { "id": "displayName", "value": "Complete" },
+            { "id": "custom.displayMode", "value": "color-background" },
+            { "id": "thresholds", "value": { "mode": "absolute", "steps": [{ "color": "red", "value": 0 }, { "color": "green", "value": 1 }] } }
+          ]}
         ]
       }
     }

@@ -146,18 +146,43 @@ Subtracting (T3 − T2) removes reflector processing time from the measurement.
 
 ### `piccolo-perf bw`
 
-TCP throughput measurement. The native tester is always available; iperf3 is used when found in `$PATH` and `-prefer-iperf3` is set.
+TCP throughput measurement. The native tester is always available; iperf3 is used when found in `$PATH` and `-prefer-iperf3` is set. Both sides must be running for a test to succeed — start the server on the target host before running the client.
 
 ```sh
-# Server (TCP sink on port 5201)
+# ── Server side (target host) ────────────────────────────────────────
+# Native TCP sink on default port 5201
 piccolo-perf bw -mode server
-piccolo-perf bw -mode server -port 9000
 
-# Client
-piccolo-perf bw -target 192.168.1.1           # native, port 5201
-piccolo-perf bw -target 192.168.1.1 -prefer-iperf3
+# Custom port (no root required)
+piccolo-perf bw -mode server -port 9201
+
+# ── Client side (probe host) ─────────────────────────────────────────
+# IPv4 target, native tester, default 5s duration
+piccolo-perf bw -target 192.168.1.10
+
+# IPv6 target (brackets required in the address string)
 piccolo-perf bw -target [2001:db8::1]:5201
-piccolo-perf bw -target 192.168.1.1 -duration 10s
+
+# Longer test for more stable average
+piccolo-perf bw -target 192.0.2.1 -duration 30s
+
+# Use iperf3 when available, fall back to native if not found
+piccolo-perf bw -target 192.0.2.1 -prefer-iperf3
+
+# Non-default port on both sides
+piccolo-perf bw -mode server -port 9201          # on target
+piccolo-perf bw -target 192.0.2.1:9201           # on probe
+```
+
+**Example output:**
+
+```
+method=native tx=941.23 Mbps
+```
+
+With iperf3:
+```
+method=iperf3 tx=938.45 Mbps
 ```
 
 **bw flags:**
@@ -165,10 +190,12 @@ piccolo-perf bw -target 192.168.1.1 -duration 10s
 | Flag | Default | Description |
 |---|---|---|
 | `-mode` | `client` | `client` or `server` |
-| `-target` | — | Target address[:port] (client mode) |
+| `-target` | — | Target `address[:port]` — bare IPv4/hostname gets `:5201` appended; IPv6 must be in brackets: `[2001:db8::1]:5201` |
 | `-port` | `5201` | Listen port (server mode) |
 | `-duration` | `5s` | Test duration |
 | `-prefer-iperf3` | `false` | Use iperf3 when available; fall back to native |
+
+> **Note:** In agent/exporter mode the bandwidth sink (port 5201) is started automatically — you only need to run `piccolo-perf bw -mode server` manually for one-shot CLI tests.
 
 ### `piccolo-perf trace`
 
@@ -188,18 +215,67 @@ sudo piccolo-perf trace -target 192.0.2.1 -max-hops 20 -probes 3
 
 ### `piccolo-perf mtu`
 
-Effective path MTU discovery via ICMP binary search with the DF bit set (IPv4) or implicit fragmentation prevention (IPv6). Supports both address families. Requires `CAP_NET_RAW` or root.
+Effective path MTU discovery via ICMP binary search. On IPv4, probes are sent with the DF (Don't Fragment) bit set; any intermediate hop that would fragment returns an ICMP Fragmentation Needed message, narrowing the search. On IPv6, the DF bit is implicit — routers never fragment, so Packet Too Big messages serve the same role. The result is the largest packet size that traverses the path without fragmentation.
+
+Requires `CAP_NET_RAW` or root. Degrades gracefully without it (`skipped=true`).
 
 ```sh
+# ── Standard Ethernet path (ceiling 1500) ────────────────────────────
 sudo piccolo-perf mtu -target 192.0.2.1
-sudo piccolo-perf mtu -target 2001:db8::1 -ceiling 9000
+sudo piccolo-perf mtu -target 2001:db8::1
+
+# ── Tunnel / VPN path — often 1280–1460 due to encapsulation overhead
+# WireGuard typically reduces MTU by ~60 bytes (1500 - 60 = 1440)
+sudo piccolo-perf mtu -target 10.0.0.1 -ceiling 1460
+
+# ── Jumbo frame network — raise ceiling to 9000
+sudo piccolo-perf mtu -target 192.168.10.1 -ceiling 9000
+sudo piccolo-perf mtu -target [fd00::1] -ceiling 9000
+
+# ── Slow or lossy link — increase timeout per probe
+sudo piccolo-perf mtu -target 203.0.113.1 -timeout 5s
+
+# ── Hostname with both A and AAAA — picks AAAA per RFC 6724
+sudo piccolo-perf mtu -target router.example.com
 ```
+
+**Example output:**
+
+```
+effective MTU: 1420 bytes (ceiling: 1500)
+```
+
+A result below the ceiling indicates fragmentation is occurring somewhere on the path. Common values:
+
+| Result | Likely cause |
+|---|---|
+| 1500 | Standard Ethernet, no encapsulation |
+| 1480 | PPPoE overhead (8 bytes) |
+| 1460 | WireGuard or similar tunnel |
+| 1440 | Double-encapsulated tunnel |
+| 1280 | IPv6 minimum; misconfigured tunnel |
+
+**mtu flags:**
 
 | Flag | Default | Description |
 |---|---|---|
-| `-target` | — | Target address (required) |
-| `-ceiling` | `1500` | Upper bound for binary search (bytes) |
-| `-timeout` | `2s` | Per-probe timeout |
+| `-target` | — | Target address or hostname (required) |
+| `-ceiling` | `1500` | Upper bound for binary search (bytes) — set to 9000 for jumbo frame networks |
+| `-timeout` | `2s` | Per-probe timeout — increase for high-latency or lossy paths |
+
+**Agent/exporter config example:**
+
+```json
+{
+  "type": "mtu",
+  "interval": "600s",
+  "targets": "all",
+  "ceiling": 1500,
+  "timeout": "2s"
+}
+```
+
+For a network with jumbo frames or VPN tunnels, adjust `ceiling` to match the expected MTU of the path being tested. Setting it too low will produce a correct result immediately (the first probe succeeds); setting it too high is fine — the binary search converges regardless.
 
 ### `piccolo-perf dns`
 

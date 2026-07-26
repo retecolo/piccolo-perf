@@ -711,7 +711,14 @@ func runMeasurerScheduler(ctx context.Context, m Measurer, spec MeasurementSpec,
 		}
 	}
 
-	// Run immediately on startup, then on each tick.
+	// Wait 30s on startup so the mesh VPN can establish peer sessions before
+	// the first probe. Without this, dials succeed at the TCP layer but are
+	// canceled immediately because the peer route isn't fully up yet.
+	select {
+	case <-time.After(30 * time.Second):
+	case <-ctx.Done():
+		return
+	}
 	probe()
 	ticker := time.NewTicker(spec.Interval)
 	defer ticker.Stop()

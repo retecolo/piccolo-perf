@@ -107,7 +107,7 @@ type iperf3JSONResult struct {
 	} `json:"end"`
 }
 
-func (m *BwMeasurer) runIperf3(ctx context.Context, target HostEntry, duration time.Duration, iperf3 string) (MeasureResult, error) {
+func (m *BwMeasurer) runIperf3(ctx context.Context, target HostEntry, duration time.Duration, iperf3Path string) (MeasureResult, error) {
 	addr := target.Address
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -118,7 +118,14 @@ func (m *BwMeasurer) runIperf3(ctx context.Context, target HostEntry, duration t
 		secs = "5"
 	}
 
-	cmd := exec.CommandContext(ctx, iperf3, "-c", host, "-J", "-t", secs)
+	// Give iperf3 its test duration plus a 15s grace period to connect and report.
+	// Without this, if the remote has only our native BwServer (not iperf3-server),
+	// iperf3 connects successfully but hangs waiting for the iperf3 protocol
+	// handshake that never arrives, blocking this goroutine indefinitely.
+	iperf3Ctx, cancel := context.WithTimeout(ctx, duration+15*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(iperf3Ctx, iperf3Path, "-c", host, "-J", "-t", secs)
 	out, err := cmd.Output()
 	if err != nil {
 		return MeasureResult{}, fmt.Errorf("iperf3: %w", err)

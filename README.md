@@ -195,7 +195,9 @@ method=iperf3 tx=938.45 Mbps
 | `-duration` | `5s` | Test duration |
 | `-prefer-iperf3` | `false` | Use iperf3 when available; fall back to native |
 
-> **Note:** In agent/exporter mode the bandwidth sink (port 5201) is started automatically — you only need to run `piccolo-perf bw -mode server` manually for one-shot CLI tests.
+> **Note:** In agent/exporter mode the bandwidth sink (port 5201) is started automatically on each probe — you only need to run `piccolo-perf bw -mode server` manually for one-shot CLI tests.
+
+> **Warning: `prefer_iperf3` requires iperf3-server on the remote.** When `prefer_iperf3` is `true` and iperf3 is installed, the client connects to the remote's port 5201. If the remote is running piccolo-perf's native BwServer (not iperf3-server), the iperf3 client will hang waiting for the iperf3 protocol handshake. Use `prefer_iperf3: false` (the default) in agent/exporter mode unless you have iperf3-server running independently on port 5201 on every peer.
 
 ### `piccolo-perf trace`
 
@@ -366,7 +368,7 @@ Served as JSON from any HTTP server (nginx, caddy, a static file host):
     },
     {
       "type": "bw", "interval": "300s", "targets": "all",
-      "duration": "5s", "prefer_iperf3": true
+      "duration": "5s", "prefer_iperf3": false
     },
     {
       "type": "trace", "interval": "600s", "targets": "all",

@@ -671,40 +671,57 @@ func buildMeasurers(hostname string, port int, synced bool, logFile *os.File) ma
 // runMeasurerScheduler drives a single Measurer on its own ticker.
 // It listens for updated AgentConfigs on configs and forwards MeasureResults to results.
 func runMeasurerScheduler(ctx context.Context, m Measurer, spec MeasurementSpec, configs <-chan AgentConfig, results chan<- MeasureResult, hostname string, logger *log.Logger, hideSkipped bool, localStore *LocalStore) {
+	// Read initial config before starting the ticker so the first probe has targets.
+	var cfg AgentConfig
+	select {
+	case cfg = <-configs:
+	case <-ctx.Done():
+		return
+	}
+
+	probe := func() {
+		targets := resolveTargets(cfg, hostname, spec.Targets, m.Name())
+		if len(targets) == 0 {
+			logger.Printf("[Agent] %s: no targets (hostname=%q not in hosts list or all targets filtered)", m.Name(), hostname)
+			return
+		}
+		mcfg := spec.MeasurerConfig
+		mcfg.Synced = true
+		for _, target := range targets {
+			rs, err := m.Run(ctx, target, mcfg)
+			if err != nil {
+				logger.Printf("[Agent] %s→%s error: %v", m.Name(), target.Name, err)
+				continue
+			}
+			for _, r := range rs {
+				if hideSkipped && r.Tags["skipped"] == "true" {
+					continue
+				}
+				select {
+				case results <- r:
+				case <-ctx.Done():
+					return
+				}
+				if localStore != nil {
+					if err := localStore.Append(r); err != nil {
+						logger.Printf("[Agent] local store append error: %v", err)
+					}
+				}
+			}
+		}
+	}
+
+	// Run immediately on startup, then on each tick.
+	probe()
 	ticker := time.NewTicker(spec.Interval)
 	defer ticker.Stop()
-	var cfg AgentConfig
 
 	for {
 		select {
 		case newCfg := <-configs:
 			cfg = newCfg
 		case <-ticker.C:
-			targets := resolveTargets(cfg, hostname, spec.Targets, m.Name())
-			mcfg := spec.MeasurerConfig
-			mcfg.Synced = true // always use agent's synced flag
-			for _, target := range targets {
-				rs, err := m.Run(ctx, target, mcfg)
-				if err != nil {
-					logger.Printf("[Agent] %s→%s error: %v", m.Name(), target.Name, err)
-					continue
-				}
-				for _, r := range rs {
-					if hideSkipped && r.Tags["skipped"] == "true" {
-						continue
-					}
-					select {
-					case results <- r:
-					case <-ctx.Done():
-						return
-					}
-					if localStore != nil {
-						if err := localStore.Append(r); err != nil {
-							logger.Printf("[Agent] local store append error: %v", err)
-						}
-					}
-				}
-			}
+			probe()
 		case <-ctx.Done():
 			return
 		}

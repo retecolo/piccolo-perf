@@ -700,6 +700,82 @@ Grant raw socket capability without running as root:
 sudo setcap cap_net_raw,cap_net_bind_service+ep /usr/local/bin/piccolo-perf
 ```
 
+## MikroTik Router Deployment (RouterOS Container)
+
+piccolo-perf runs as a Docker container on RouterOS 7.6+ devices with ARM or ARM64 CPUs (RB4011, CCR2004, RB5009, CHR). MIPS-based hardware (hEX, hAP) is not supported.
+
+### Prerequisites
+
+1. Install the `container` package and reboot:
+
+   ```routeros
+   /system/package/enable container
+   ```
+
+2. Enable container mode in settings:
+
+   ```routeros
+   /system/device-mode/set container=yes
+   ```
+
+3. Ensure the router can reach GitHub (for image pull) and your config server.
+
+### Quick setup
+
+Copy `deploy/mikrotik/setup.rsc` to the router and import it:
+
+```routeros
+/import file=setup.rsc
+```
+
+Edit the variables at the top of the script before importing — at minimum set `configUrl` to your config server URL and `inInterface` to your uplink interface.
+
+The script:
+- Creates a `veth` pair and bridge for the container
+- Sets up IPv4 NAT so the container can reach the internet
+- Adds firewall rules to allow ports 862/udp, 5201/tcp, and 9862/tcp inbound
+- Creates the container with `cap-add=NET_RAW,NET_BIND_SERVICE` (required for MTU/trace and TWAMP on port 862)
+- Starts the container on boot
+
+### IPv6 addressing
+
+The container gets IPv6 via SLAAC from the bridge if you configure an RA prefix on it, or you can assign a static GUA directly. Use the router's GUA prefix — no VPN required. Add the container's IPv6 to `piccolo_perf_hosts` in your config:
+
+```json
+{ "name": "mikrotik-rb4011", "address": "2001:db8:1:2::probe", "site": "edge" }
+```
+
+Other probes need to reach the MikroTik on ports 862/udp, 5201/tcp (bw), and 9862/tcp (metrics). Ensure your upstream firewall permits these from peer probe addresses.
+
+### Dual-stack (IPv4 + IPv6)
+
+The container listens on `[::]` for all services, which accepts both IPv4 and IPv6 connections on dual-stack kernels. If the router is IPv4-only, the DNAT rules in the setup script forward all three ports from the router's IPv4 address to the container.
+
+### Resource usage
+
+On an RB4011 (ARM, 1 GB RAM) at default intervals (TWAMP 300s, bw 1200s):
+
+| Measurement | CPU spike | Idle RSS |
+|---|---|---|
+| TWAMP reflector | < 1% | ~8 MB |
+| bw client (10s) | 15–40% | ~10 MB |
+| MTU/trace | < 5% | ~9 MB |
+
+Reduce `duration` and increase `interval` for lower-spec hardware.
+
+### Updating
+
+RouterOS does not pull updated images automatically. To update:
+
+```routeros
+/container/stop piccolo-perf
+/container/remove piccolo-perf
+# Re-run the /container/add command from setup.rsc
+/container/start piccolo-perf
+```
+
+Or push a new image tag and reference it explicitly in `setup.rsc`.
+
 ## Scheduling with Cron
 
 ```sh
